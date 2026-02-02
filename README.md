@@ -62,12 +62,26 @@ uv tool install git+https://github.com/wlhuang-spuree/claude-conversation-extrac
 
 ## 🚀 How to Export Claude Code Conversations
 
-### Quick Start - Directly Select File
-1. cd into `~\.claude\projects` or `%USERPROFILE%\.claude\projects`
-2. copy the fullpath of target file (`.jsonl`)
-3. command `claude-extract --format html --detailed --output ./claude_exports --input "C:\Users\alan\.claude\projects\E--spuree-misc\ea6be090-25d9-4950-a98b-8b426d1d8280.jsonl"`
+### Quick Start - Directly From File
+- Select from File 
+   1. cd into `~\.claude\projects` or `%USERPROFILE%\.claude\projects`
+   2. copy the fullpath of target file (`.jsonl`)
+   3. command `claude-extract --format html --detailed --output ./claude_exports --input "C:\Users\alan\.claude\projects\E--spuree-misc\ea6be090-25d9-4950-a98b-8b426d1d8280.jsonl"`
+    Quick snippet: `claude-extract --format html --detailed --output ./claude_exports --input $input`
+- Select from session ID
+   1. in Claude Code, enter target session and cmd `/status`:
+   ```
+   ❯ /status
+    ─────────────────────────────────────────────
+    Settings:  Status   Config   Usage  (←/→ or tab to cycle)
 
-Quick snippet: `claude-extract --format html --detailed --output ./claude_exports --input $input`
+    Version: 2.1.29
+    Session name: /rename to add a name
+    >>> Session ID: ea6be090-25d9-4950-a98b-8b426d1d8280 <<<
+    cwd: E:\spuree\misc
+   ```
+    2. `claude-extract --format html --detailed --output ./claude_exports --session $session_id`
+
 ### Quick Start - Realtime CLI
 ```bash
 # Run the interactive UI with ASCII art logo and real-time search
@@ -105,6 +119,10 @@ claude-extract --all
 claude-extract --input file.jsonl
 claude-extract --input ~/.claude/projects/my-project/chat_123.jsonl
 claude-extract --file ./conversations/session.jsonl
+
+# Extract by session ID (searches automatically in ~/.claude/projects)
+claude-extract --session-id ea6be090-25d9-4950-a98b-8b426d1d8280
+claude-extract --session-id ea6be090-25d9-4950-a98b-8b426d1d8280 --format html --detailed
 
 # Save Claude logs to custom location
 claude-extract --output ~/my-claude-backups
@@ -212,12 +230,20 @@ Yes! Version 1.1.1 supports multiple export formats:
 Use `--format json` or `--format html` when extracting.
 
 ### Can I extract from a specific JSONL file?
-Yes! Use the `--input` or `--file` parameter to extract directly from a specific file:
+Yes! You have two options:
+
+1. **By file path** - Use the `--input` or `--file` parameter:
 ```bash
 claude-extract --input file.jsonl --format html
 claude-extract --file ~/.claude/projects/my-project/chat_123.jsonl
 ```
-This is useful when you want to process a specific file without searching through all conversations, or when working with files outside the default location.
+
+2. **By session ID** - Use the `--session-id` parameter (automatically searches in ~/.claude/projects):
+```bash
+claude-extract --session-id ea6be090-25d9-4950-a98b-8b426d1d8280 --format html
+```
+
+The `--session-id` option is useful when you know the session ID from Claude Code's `/status` command and want to extract without finding the file path manually.
 
 ### Is this tool official?
 No, this is an independent open-source tool. It reads the local Claude Code files on your computer - no API or internet required.

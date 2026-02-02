@@ -65,6 +65,22 @@ class ClaudeConversationExtractor:
                 sessions.append(jsonl_file)
         return sorted(sessions, key=lambda x: x.stat().st_mtime, reverse=True)
 
+    def find_session_by_id(self, session_id: str) -> Optional[Path]:
+        """Find a session file by session ID.
+        
+        Args:
+            session_id: Session ID (without .jsonl extension)
+        
+        Returns:
+            Path to the JSONL file if found, None otherwise
+        """
+        if not self.claude_dir.exists():
+            return None
+        
+        # Search for {session_id}.jsonl
+        matches = list(self.claude_dir.rglob(f"{session_id}.jsonl"))
+        return matches[0] if matches else None
+
     def extract_conversation(self, jsonl_path: Path, detailed: bool = False) -> List[Dict[str, str]]:
         """Extract conversation messages from a JSONL file.
         
@@ -1383,6 +1399,13 @@ Examples:
         dest="input_file",
         help="Specify input JSONL file path directly (supports relative and absolute paths)"
     )
+    parser.add_argument(
+        "--session-id",
+        "--session",
+        type=str,
+        dest="session_id",
+        help="Find and extract session by session ID (searches in ~/.claude/projects)"
+    )
 
     args = parser.parse_args()
 
@@ -1439,6 +1462,48 @@ Examples:
         output_path = extractor.save_conversation(
             conversation, 
             session_id, 
+            format=args.format
+        )
+        
+        if output_path:
+            print(f"✅ Successfully extracted {len(conversation)} messages")
+            print(f"   Saved to: {output_path}")
+        else:
+            print("❌ Failed to save conversation")
+        
+        return
+
+    # Handle --session-id parameter (second priority after --input)
+    if args.session_id:
+        # Initialize extractor with optional output directory
+        extractor = ClaudeConversationExtractor(args.output)
+        
+        # Find session file by ID
+        session_path = extractor.find_session_by_id(args.session_id)
+        
+        if not session_path:
+            print(f"❌ Error: Session not found: {args.session_id}")
+            print(f"   Searched in: {extractor.claude_dir}")
+            print(f"   Please check the session ID and try again.")
+            return
+        
+        # Extract conversation from the found file
+        print(f"\n📤 Extracting from: {session_path}")
+        print(f"   Session ID: {args.session_id}")
+        print(f"   Format: {args.format.upper()}")
+        if args.detailed:
+            print("   📋 Including detailed tool use and system messages")
+        
+        conversation = extractor.extract_conversation(session_path, detailed=args.detailed)
+        
+        if not conversation:
+            print("❌ No conversation found in the file")
+            return
+        
+        # Save in the requested format
+        output_path = extractor.save_conversation(
+            conversation, 
+            args.session_id, 
             format=args.format
         )
         
