@@ -11,7 +11,7 @@ import argparse
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union, Any
 
 
 class ClaudeConversationExtractor:
@@ -73,6 +73,10 @@ class ClaudeConversationExtractor:
             detailed: If True, include tool use, MCP responses, and system messages
         """
         conversation = []
+        # Map tool_use_id to subagent_type for tracking subagent types
+        tool_use_to_subagent_type = {}
+        # Map tool_use_id to tool name for displaying tool results
+        tool_use_to_name = {}
 
         try:
             with open(jsonl_path, "r", encoding="utf-8") as f:
@@ -85,13 +89,21 @@ class ClaudeConversationExtractor:
                             msg = entry["message"]
                             if isinstance(msg, dict) and msg.get("role") == "user":
                                 content = msg.get("content", "")
-                                text = self._extract_text_content(content)
-
+                                rich_content = self._extract_rich_content(content, detailed=detailed)
+                                # Fill tool_name in tool_result parts
+                                rich_content = self._fill_tool_names(rich_content, tool_use_to_name)
+                                
+                                # Check if there's actual content
+                                if isinstance(rich_content, dict):
+                                    text = rich_content.get("text", "")
+                                else:
+                                    text = str(rich_content)
+                                
                                 if text and text.strip():
                                     conversation.append(
                                         {
                                             "role": "user",
-                                            "content": text,
+                                            "content": rich_content,
                                             "timestamp": entry.get("timestamp", ""),
                                         }
                                     )
@@ -101,16 +113,125 @@ class ClaudeConversationExtractor:
                             msg = entry["message"]
                             if isinstance(msg, dict) and msg.get("role") == "assistant":
                                 content = msg.get("content", [])
-                                text = self._extract_text_content(content, detailed=detailed)
-
+                                
+                                # Track tool uses to extract subagent_type and tool names
+                                if isinstance(content, list):
+                                    for item in content:
+                                        if isinstance(item, dict) and item.get("type") == "tool_use":
+                                            tool_id = item.get("id", "")
+                                            tool_name = item.get("name", "")
+                                            # Map tool_use_id to tool name
+                                            if tool_id and tool_name:
+                                                tool_use_to_name[tool_id] = tool_name
+                                            # Track Task tool for subagent_type
+                                            if tool_name == "Task":
+                                                tool_input = item.get("input", {})
+                                                subagent_type = tool_input.get("subagent_type", "")
+                                                if subagent_type:
+                                                    tool_use_to_subagent_type[tool_id] = subagent_type
+                                
+                                rich_content = self._extract_rich_content(content, detailed=detailed)
+                                # Fill tool_name in tool_result parts
+                                rich_content = self._fill_tool_names(rich_content, tool_use_to_name)
+                                
+                                # Check if there's actual content
+                                if isinstance(rich_content, dict):
+                                    text = rich_content.get("text", "")
+                                else:
+                                    text = str(rich_content)
+                                
                                 if text and text.strip():
                                     conversation.append(
                                         {
                                             "role": "assistant",
-                                            "content": text,
+                                            "content": rich_content,
                                             "timestamp": entry.get("timestamp", ""),
                                         }
                                     )
+                        
+                        # Extract progress entries (subagent output)
+                        elif entry.get("type") == "progress":
+                            data = entry.get("data", {})
+                            progress_type = data.get("type")
+                            
+                            if progress_type == "agent_progress":
+                                # Extract subagent messages
+                                message_data = data.get("message", {})
+                                if message_data:
+                                    msg_type = message_data.get("type")  # "user" or "assistant"
+                                    msg = message_data.get("message", {})
+                                    agent_id = data.get("agentId", "unknown")
+                                    parent_tool_use_id = entry.get("parentToolUseID", "")
+                                    
+                                    # Get subagent_type from the tool_use mapping
+                                    subagent_type = tool_use_to_subagent_type.get(parent_tool_use_id, "")
+                                    
+                                    if msg_type == "user" and msg.get("role") == "user":
+                                        content = msg.get("content", [])
+                                        
+                                        # Track tool_use in subagent messages
+                                        if isinstance(content, list):
+                                            for item in content:
+                                                if isinstance(item, dict) and item.get("type") == "tool_use":
+                                                    tool_id = item.get("id", "")
+                                                    tool_name = item.get("name", "")
+                                                    if tool_id and tool_name:
+                                                        tool_use_to_name[tool_id] = tool_name
+                                        
+                                        rich_content = self._extract_rich_content(content, detailed=detailed)
+                                        # Fill tool_name in tool_result parts
+                                        rich_content = self._fill_tool_names(rich_content, tool_use_to_name)
+                                        
+                                        if isinstance(rich_content, dict):
+                                            text = rich_content.get("text", "")
+                                        else:
+                                            text = str(rich_content)
+                                        
+                                        if text and text.strip():
+                                            conversation.append({
+                                                "role": "subagent_user",
+                                                "content": rich_content,
+                                                "metadata": {
+                                                    "agent_id": agent_id,
+                                                    "agent_type": "subagent",
+                                                    "subagent_type": subagent_type,
+                                                    "parent_tool_use_id": parent_tool_use_id
+                                                },
+                                                "timestamp": message_data.get("timestamp", entry.get("timestamp", ""))
+                                            })
+                                    elif msg_type == "assistant" and msg.get("role") == "assistant":
+                                        content = msg.get("content", [])
+                                        
+                                        # Track tool_use in subagent messages
+                                        if isinstance(content, list):
+                                            for item in content:
+                                                if isinstance(item, dict) and item.get("type") == "tool_use":
+                                                    tool_id = item.get("id", "")
+                                                    tool_name = item.get("name", "")
+                                                    if tool_id and tool_name:
+                                                        tool_use_to_name[tool_id] = tool_name
+                                        
+                                        rich_content = self._extract_rich_content(content, detailed=detailed)
+                                        # Fill tool_name in tool_result parts
+                                        rich_content = self._fill_tool_names(rich_content, tool_use_to_name)
+                                        
+                                        if isinstance(rich_content, dict):
+                                            text = rich_content.get("text", "")
+                                        else:
+                                            text = str(rich_content)
+                                        
+                                        if text and text.strip():
+                                            conversation.append({
+                                                "role": "subagent_assistant",
+                                                "content": rich_content,
+                                                "metadata": {
+                                                    "agent_id": agent_id,
+                                                    "agent_type": "subagent",
+                                                    "subagent_type": subagent_type,
+                                                    "parent_tool_use_id": parent_tool_use_id
+                                                },
+                                                "timestamp": message_data.get("timestamp", entry.get("timestamp", ""))
+                                            })
                         
                         # Include tool use and system messages if detailed mode
                         elif detailed:
@@ -162,32 +283,354 @@ class ClaudeConversationExtractor:
 
         return conversation
 
+    def _fill_tool_names(self, content: Union[str, Dict[str, Any]], tool_use_to_name: Dict[str, str]) -> Union[str, Dict[str, Any]]:
+        """Fill tool_name in tool_result parts using tool_use_id mapping.
+        
+        Args:
+            content: Content dict or string
+            tool_use_to_name: Mapping from tool_use_id to tool name
+        
+        Returns:
+            Content with tool_name filled in tool_result parts
+        """
+        if isinstance(content, str) or not isinstance(content, dict):
+            return content
+        
+        parts = content.get("parts", [])
+        if parts:
+            for part in parts:
+                if part.get("type") == "tool_result":
+                    tool_use_id = part.get("tool_use_id", "")
+                    if tool_use_id and not part.get("tool_name"):
+                        tool_name = tool_use_to_name.get(tool_use_id, "")
+                        if tool_name:
+                            part["tool_name"] = tool_name
+        
+        return content
+    
     def _extract_text_content(self, content, detailed: bool = False) -> str:
-        """Extract text from various content formats Claude uses.
+        """Extract text from various content formats Claude uses (legacy method).
         
         Args:
             content: The content to extract from
             detailed: If True, include tool use blocks and other metadata
+        
+        Returns:
+            Plain text string for backward compatibility
+        """
+        rich_content = self._extract_rich_content(content, detailed=detailed)
+        if isinstance(rich_content, dict):
+            return rich_content.get("text", "")
+        return str(rich_content)
+    
+    def _extract_rich_content(self, content, detailed: bool = False) -> Union[str, Dict[str, Any]]:
+        """Extract structured content from various formats Claude uses.
+        
+        Args:
+            content: The content to extract from (string, list, or dict)
+            detailed: If True, include tool use blocks and other metadata
+        
+        Returns:
+            Either a string (for simple text) or a dict with structure:
+            {
+                "type": "text" | "rich",
+                "text": str,  # Plain text representation for backward compatibility
+                "parts": [
+                    {"type": "text", "text": str} |
+                    {"type": "thinking", "thinking": str} |
+                    {"type": "tool_use", "name": str, "input": dict} |
+                    {"type": "image", "source": dict, ...} |
+                    {"type": "tool_reference", "tool_name": str}
+                ]
+            }
+        """
+        if isinstance(content, str):
+            return {
+                "type": "text",
+                "text": content,
+                "parts": [{"type": "text", "text": content}]
+            }
+        elif isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    item_type = item.get("type")
+                    if item_type == "text":
+                        parts.append({
+                            "type": "text",
+                            "text": item.get("text", "")
+                        })
+                    elif item_type == "thinking":
+                        parts.append({
+                            "type": "thinking",
+                            "thinking": item.get("thinking", "")
+                        })
+                    elif item_type == "tool_use":
+                        if detailed:
+                            parts.append({
+                                "type": "tool_use",
+                                "name": item.get("name", "unknown"),
+                                "input": item.get("input", {})
+                            })
+                    elif item_type == "image":
+                        source = item.get("source", {})
+                        image_data = {
+                            "type": "image",
+                            "source_type": source.get("type", "unknown")
+                        }
+                        
+                        # Process base64 data
+                        if "data" in source:
+                            image_data["source"] = source  # Save full source for HTML rendering
+                            image_data["has_full_data"] = True
+                        
+                        # Process dataUrl
+                        if "dataUrl" in source:
+                            image_data["data_url"] = source["dataUrl"]
+                        
+                        parts.append(image_data)
+                    elif item_type == "tool_reference":
+                        parts.append({
+                            "type": "tool_reference",
+                            "tool_name": item.get("tool_name", "unknown")
+                        })
+                    elif item_type == "tool_result":
+                        # Recursively extract content from tool_result
+                        tool_result_content = item.get("content", [])
+                        tool_result_extracted = self._extract_rich_content(tool_result_content, detailed=detailed)
+                        tool_use_id = item.get("tool_use_id", "")
+                        
+                        if isinstance(tool_result_extracted, dict):
+                            # Extract parts from the tool_result content
+                            tool_result_inner_parts = tool_result_extracted.get("parts", [])
+                            # Add tool_result wrapper for each inner part
+                            for inner_part in tool_result_inner_parts:
+                                parts.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_use_id,
+                                    "tool_name": None,  # Will be filled later if mapping available
+                                    "content": inner_part
+                                })
+                        else:
+                            # Fallback: treat as text
+                            parts.append({
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "tool_name": None,  # Will be filled later if mapping available
+                                "content": {"type": "text", "text": str(tool_result_extracted)}
+                            })
+            
+            # If only one text part, return simplified format for backward compatibility
+            if len(parts) == 1 and parts[0]["type"] == "text":
+                return {
+                    "type": "text",
+                    "text": parts[0]["text"],
+                    "parts": parts
+                }
+            elif len(parts) == 0:
+                return {
+                    "type": "text",
+                    "text": "",
+                    "parts": []
+                }
+            else:
+                # Build combined text for backward compatibility
+                text_parts = []
+                for part in parts:
+                    if part["type"] == "text":
+                        text_parts.append(part["text"])
+                    elif part["type"] == "thinking":
+                        text_parts.append(f"\n[Thinking] {part['thinking']}\n")
+                    elif part["type"] == "tool_use":
+                        text_parts.append(f"\n🔧 Using tool: {part['name']}\n")
+                        text_parts.append(f"Input: {json.dumps(part['input'], indent=2, ensure_ascii=False)}\n")
+                    elif part["type"] == "image":
+                        text_parts.append("\n[Image]\n")
+                    elif part["type"] == "tool_reference":
+                        text_parts.append(f"\n[Tool Reference] {part['tool_name']}\n")
+                    elif part["type"] == "tool_result":
+                        tool_use_id = part.get("tool_use_id", "")
+                        tool_name = part.get("tool_name", "")
+                        tool_display = tool_name if tool_name else f"{tool_use_id[:8]}..."
+                        content_part = part.get("content", {})
+                        if isinstance(content_part, dict):
+                            if content_part.get("type") == "text":
+                                text_parts.append(f"\n[Tool Result: {tool_display}]\n{content_part.get('text', '')}\n")
+                            elif content_part.get("type") == "image":
+                                text_parts.append(f"\n[Tool Result: {tool_display}]\n[Image]\n")
+                            else:
+                                text_parts.append(f"\n[Tool Result: {tool_display}]\n")
+                        else:
+                            text_parts.append(f"\n[Tool Result: {tool_display}]\n{str(content_part)}\n")
+                
+                return {
+                    "type": "rich",
+                    "text": "\n".join(text_parts),
+                    "parts": parts
+                }
+        else:
+            return {
+                "type": "text",
+                "text": str(content),
+                "parts": [{"type": "text", "text": str(content)}]
+            }
+
+    def _escape_html(self, text: str) -> str:
+        """Escape HTML special characters"""
+        return (text.replace("&", "&amp;")
+                   .replace("<", "&lt;")
+                   .replace(">", "&gt;")
+                   .replace('"', "&quot;")
+                   .replace("'", "&#x27;"))
+    
+    def _render_content_to_html(self, content: Union[str, Dict[str, Any]]) -> str:
+        """Render content to HTML format.
+        
+        Args:
+            content: Can be a string (backward compatible) or structured content dict
+        
+        Returns:
+            HTML formatted string
+        """
+        if isinstance(content, str):
+            # Backward compatible: plain text content
+            return self._escape_html(content)
+        
+        # Structured content
+        parts = content.get("parts", [])
+        html_parts = []
+        
+        for part in parts:
+            part_type = part.get("type")
+            if part_type == "text":
+                html_parts.append(f'<div class="content-text">{self._escape_html(part["text"])}</div>')
+            elif part_type == "thinking":
+                html_parts.append(
+                    f'<div class="content-thinking">'
+                    f'<div class="thinking-header">Thinking Process</div>'
+                    f'<div class="thinking-content">{self._escape_html(part["thinking"])}</div>'
+                    f'</div>'
+                )
+            elif part_type == "tool_use":
+                tool_input_json = json.dumps(part["input"], indent=2, ensure_ascii=False)
+                html_parts.append(
+                    f'<div class="content-tool-use">'
+                    f'<div class="tool-name">🔧 {self._escape_html(part["name"])}</div>'
+                    f'<pre class="tool-input">{self._escape_html(tool_input_json)}</pre>'
+                    f'</div>'
+                )
+            elif part_type == "image":
+                source = part.get("source", {})
+                if "data" in source and part.get("has_full_data"):
+                    # Display base64 image
+                    data_url = f"data:image/jpeg;base64,{source['data']}"
+                    html_parts.append(
+                        f'<div class="content-image">'
+                        f'<img src="{data_url}" alt="Screenshot" style="max-width: 100%; height: auto;" />'
+                        f'</div>'
+                    )
+                elif part.get("data_url"):
+                    html_parts.append(
+                        f'<div class="content-image">'
+                        f'<img src="{self._escape_html(part["data_url"])}" alt="Screenshot" style="max-width: 100%; height: auto;" />'
+                        f'</div>'
+                    )
+                else:
+                    html_parts.append('<div class="content-image-placeholder">[Image Data]</div>')
+            elif part_type == "tool_reference":
+                html_parts.append(
+                    f'<div class="content-tool-reference">'
+                    f'<span class="tool-ref-label">Tool Reference:</span> '
+                    f'<code>{self._escape_html(part["tool_name"])}</code>'
+                    f'</div>'
+                )
+            elif part_type == "tool_result":
+                tool_use_id = part.get("tool_use_id", "")
+                tool_name = part.get("tool_name", "")
+                tool_display = tool_name if tool_name else f"{tool_use_id[:8]}..."
+                content_part = part.get("content", {})
+                
+                html_parts.append(f'<div class="content-tool-result">')
+                html_parts.append(f'<div class="tool-result-header">📤 Tool Result: {self._escape_html(tool_display)}</div>')
+                
+                if isinstance(content_part, dict):
+                    content_type = content_part.get("type")
+                    if content_type == "text":
+                        html_parts.append(f'<div class="tool-result-content">{self._escape_html(content_part.get("text", ""))}</div>')
+                    elif content_type == "image":
+                        source = content_part.get("source", {})
+                        if "data" in source and content_part.get("has_full_data"):
+                            data_url = f"data:image/jpeg;base64,{source['data']}"
+                            html_parts.append(
+                                f'<div class="content-image">'
+                                f'<img src="{data_url}" alt="Screenshot" style="max-width: 100%; height: auto;" />'
+                                f'</div>'
+                            )
+                        elif content_part.get("data_url"):
+                            html_parts.append(
+                                f'<div class="content-image">'
+                                f'<img src="{self._escape_html(content_part["data_url"])}" alt="Screenshot" style="max-width: 100%; height: auto;" />'
+                                f'</div>'
+                            )
+                        else:
+                            html_parts.append('<div class="content-image-placeholder">[Image Data]</div>')
+                    else:
+                        html_parts.append(f'<div class="tool-result-content">{self._escape_html(str(content_part))}</div>')
+                else:
+                    html_parts.append(f'<div class="tool-result-content">{self._escape_html(str(content_part))}</div>')
+                
+                html_parts.append(f'</div>')
+        
+        return "\n".join(html_parts) if html_parts else self._escape_html(content.get("text", ""))
+    
+    def _render_content_to_markdown(self, content: Union[str, Dict[str, Any]]) -> str:
+        """Render content to Markdown format.
+        
+        Args:
+            content: Can be a string (backward compatible) or structured content dict
+        
+        Returns:
+            Markdown formatted string
         """
         if isinstance(content, str):
             return content
-        elif isinstance(content, list):
-            # Extract text from content array
-            text_parts = []
-            for item in content:
-                if isinstance(item, dict):
-                    if item.get("type") == "text":
-                        text_parts.append(item.get("text", ""))
-                    elif detailed and item.get("type") == "tool_use":
-                        # Include tool use details in detailed mode
-                        tool_name = item.get("name", "unknown")
-                        tool_input = item.get("input", {})
-                        text_parts.append(f"\n🔧 Using tool: {tool_name}")
-                        text_parts.append(f"Input: {json.dumps(tool_input, indent=2)}\n")
-            return "\n".join(text_parts)
-        else:
-            return str(content)
-
+        
+        # Structured content
+        parts = content.get("parts", [])
+        markdown_parts = []
+        
+        for part in parts:
+            part_type = part.get("type")
+            if part_type == "text":
+                markdown_parts.append(part["text"])
+            elif part_type == "thinking":
+                markdown_parts.append(f"\n**Thinking Process:**\n\n```\n{part['thinking']}\n```\n")
+            elif part_type == "tool_use":
+                markdown_parts.append(f"\n**🔧 Using Tool:** `{part['name']}`\n\n```json\n{json.dumps(part['input'], indent=2, ensure_ascii=False)}\n```\n")
+            elif part_type == "image":
+                markdown_parts.append("\n**📷 Image**\n\n*[Image data included in conversation]*\n")
+            elif part_type == "tool_reference":
+                markdown_parts.append(f"\n**Tool Reference:** `{part['tool_name']}`\n")
+            elif part_type == "tool_result":
+                tool_use_id = part.get("tool_use_id", "")
+                tool_name = part.get("tool_name", "")
+                tool_display = tool_name if tool_name else f"{tool_use_id[:8]}..."
+                content_part = part.get("content", {})
+                markdown_parts.append(f"\n**📤 Tool Result: {tool_display}**\n\n")
+                
+                if isinstance(content_part, dict):
+                    content_type = content_part.get("type")
+                    if content_type == "text":
+                        markdown_parts.append(f"{content_part.get('text', '')}\n")
+                    elif content_type == "image":
+                        markdown_parts.append("*[Image data included in conversation]*\n")
+                    else:
+                        markdown_parts.append(f"{str(content_part)}\n")
+                else:
+                    markdown_parts.append(f"{str(content_part)}\n")
+        
+        return "\n".join(markdown_parts) if markdown_parts else content.get("text", "")
+    
     def display_conversation(self, jsonl_path: Path, detailed: bool = False) -> None:
         """Display a conversation in the terminal with pagination.
         
@@ -232,6 +675,12 @@ class ClaudeConversationExtractor:
                 role = msg["role"]
                 content = msg["content"]
                 
+                # Handle structured content
+                if isinstance(content, dict):
+                    display_content = content.get("text", "")
+                else:
+                    display_content = str(content)
+                
                 # Format role display
                 if role == "user" or role == "human":
                     print(f"\n{'─' * 40}")
@@ -240,6 +689,22 @@ class ClaudeConversationExtractor:
                 elif role == "assistant":
                     print(f"\n{'─' * 40}")
                     print(f"🤖 CLAUDE:")
+                    print(f"{'─' * 40}")
+                elif role == "subagent_user":
+                    metadata = msg.get("metadata", {})
+                    agent_id = metadata.get("agent_id", "unknown")
+                    subagent_type = metadata.get("subagent_type", "")
+                    subagent_display = f"{subagent_type.upper()}" if subagent_type else f"{agent_id[:8]}..."
+                    print(f"\n{'─' * 40}")
+                    print(f"🤖 SUBAGENT ({subagent_display}) USER:")
+                    print(f"{'─' * 40}")
+                elif role == "subagent_assistant":
+                    metadata = msg.get("metadata", {})
+                    agent_id = metadata.get("agent_id", "unknown")
+                    subagent_type = metadata.get("subagent_type", "")
+                    subagent_display = f"{subagent_type.upper()}" if subagent_type else f"{agent_id[:8]}..."
+                    print(f"\n{'─' * 40}")
+                    print(f"🤖 SUBAGENT ({subagent_display}) ASSISTANT:")
                     print(f"{'─' * 40}")
                 elif role == "tool_use":
                     print(f"\n🔧 TOOL USE:")
@@ -251,7 +716,7 @@ class ClaudeConversationExtractor:
                     print(f"\n{role.upper()}:")
                 
                 # Display content (limit very long messages)
-                lines = content.split('\n')
+                lines = display_content.split('\n')
                 max_lines_per_msg = 50
                 
                 for line_idx, line in enumerate(lines[:max_lines_per_msg]):
@@ -321,24 +786,44 @@ class ClaudeConversationExtractor:
                 role = msg["role"]
                 content = msg["content"]
                 
+                # Handle structured content
+                if isinstance(content, dict):
+                    display_content = self._render_content_to_markdown(content)
+                else:
+                    display_content = str(content)
+                
                 if role == "user":
                     f.write("## 👤 User\n\n")
-                    f.write(f"{content}\n\n")
+                    f.write(f"{display_content}\n\n")
                 elif role == "assistant":
                     f.write("## 🤖 Claude\n\n")
-                    f.write(f"{content}\n\n")
+                    f.write(f"{display_content}\n\n")
+                elif role == "subagent_user":
+                    metadata = msg.get("metadata", {})
+                    agent_id = metadata.get("agent_id", "unknown")
+                    subagent_type = metadata.get("subagent_type", "")
+                    subagent_display = f"{subagent_type.upper()}" if subagent_type else f"{agent_id[:8]}..."
+                    f.write(f"## 🤖 Subagent ({subagent_display}) - User\n\n")
+                    f.write(f"{display_content}\n\n")
+                elif role == "subagent_assistant":
+                    metadata = msg.get("metadata", {})
+                    agent_id = metadata.get("agent_id", "unknown")
+                    subagent_type = metadata.get("subagent_type", "")
+                    subagent_display = f"{subagent_type.upper()}" if subagent_type else f"{agent_id[:8]}..."
+                    f.write(f"## 🤖 Subagent ({subagent_display}) - Assistant\n\n")
+                    f.write(f"{display_content}\n\n")
                 elif role == "tool_use":
                     f.write("### 🔧 Tool Use\n\n")
-                    f.write(f"{content}\n\n")
+                    f.write(f"{display_content}\n\n")
                 elif role == "tool_result":
                     f.write("### 📤 Tool Result\n\n")
-                    f.write(f"{content}\n\n")
+                    f.write(f"{display_content}\n\n")
                 elif role == "system":
                     f.write("### ℹ️ System\n\n")
-                    f.write(f"{content}\n\n")
+                    f.write(f"{display_content}\n\n")
                 else:
                     f.write(f"## {role}\n\n")
-                    f.write(f"{content}\n\n")
+                    f.write(f"{display_content}\n\n")
                 f.write("---\n\n")
 
         return output_path
@@ -458,6 +943,10 @@ class ClaudeConversationExtractor:
             border-left: 4px solid #95a5a6;
             background: #f8f9fa;
         }}
+        .subagent_user, .subagent_assistant {{
+            border-left: 4px solid #9b59b6;
+            background: #f8f4ff;
+        }}
         .role {{
             font-weight: bold;
             margin-bottom: 10px;
@@ -467,6 +956,93 @@ class ClaudeConversationExtractor:
         .content {{
             white-space: pre-wrap;
             word-wrap: break-word;
+        }}
+        .content-text {{
+            margin: 5px 0;
+        }}
+        .content-thinking {{
+            background: #f0f7ff;
+            border-left: 3px solid #4a90e2;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }}
+        .thinking-header {{
+            font-weight: bold;
+            color: #2c5aa0;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }}
+        .thinking-content {{
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #333;
+        }}
+        .content-tool-use {{
+            background: #fffbf0;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }}
+        .tool-name {{
+            font-weight: bold;
+            color: #856404;
+            margin-bottom: 5px;
+        }}
+        .tool-input {{
+            background: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 0;
+        }}
+        .content-image {{
+            margin: 10px 0;
+            text-align: center;
+        }}
+        .content-image img {{
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        .content-image-placeholder {{
+            background: #f4f4f4;
+            padding: 20px;
+            border-radius: 4px;
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }}
+        .content-tool-reference {{
+            background: #fff9e6;
+            padding: 8px;
+            border-radius: 4px;
+            margin: 5px 0;
+        }}
+        .tool-ref-label {{
+            font-weight: bold;
+            color: #856404;
+        }}
+        .content-tool-result {{
+            background: #fff5f5;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            border-left: 3px solid #e74c3c;
+        }}
+        .tool-result-header {{
+            font-weight: bold;
+            color: #c0392b;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }}
+        .tool-result-content {{
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #333;
         }}
         pre {{
             background: #f4f4f4;
@@ -500,22 +1076,34 @@ class ClaudeConversationExtractor:
                 role = msg["role"]
                 content = msg["content"]
                 
-                # Escape HTML
-                content = content.replace("&", "&amp;")
-                content = content.replace("<", "&lt;")
-                content = content.replace(">", "&gt;")
+                # Render content to HTML
+                rendered_content = self._render_content_to_html(content)
                 
-                role_display = {
-                    "user": "👤 User",
-                    "assistant": "🤖 Claude",
-                    "tool_use": "🔧 Tool Use",
-                    "tool_result": "📤 Tool Result",
-                    "system": "ℹ️ System"
-                }.get(role, role)
+                # Determine role display
+                if role == "subagent_user":
+                    metadata = msg.get("metadata", {})
+                    agent_id = metadata.get("agent_id", "unknown")
+                    subagent_type = metadata.get("subagent_type", "")
+                    subagent_display = f"{subagent_type.upper()}" if subagent_type else f"{agent_id[:8]}..."
+                    role_display = f"🤖 Subagent ({subagent_display}) - User"
+                elif role == "subagent_assistant":
+                    metadata = msg.get("metadata", {})
+                    agent_id = metadata.get("agent_id", "unknown")
+                    subagent_type = metadata.get("subagent_type", "")
+                    subagent_display = f"{subagent_type.upper()}" if subagent_type else f"{agent_id[:8]}..."
+                    role_display = f"🤖 Subagent ({subagent_display}) - Assistant"
+                else:
+                    role_display = {
+                        "user": "👤 User",
+                        "assistant": "🤖 Claude",
+                        "tool_use": "🔧 Tool Use",
+                        "tool_result": "📤 Tool Result",
+                        "system": "ℹ️ System"
+                    }.get(role, role)
                 
                 f.write(f'    <div class="message {role}">\n')
                 f.write(f'        <div class="role">{role_display}</div>\n')
-                f.write(f'        <div class="content">{content}</div>\n')
+                f.write(f'        <div class="content">{rendered_content}</div>\n')
                 f.write(f'    </div>\n')
             
             f.write("\n</body>\n</html>")
@@ -711,12 +1299,14 @@ Examples:
   %(prog)s --extract 1,3,5           # Extract specific sessions
   %(prog)s --recent 5                # Extract 5 most recent sessions
   %(prog)s --all                     # Extract all sessions
+  %(prog)s --input file.jsonl        # Extract specified JSONL file
   %(prog)s --output ~/my-logs        # Specify output directory
   %(prog)s --search "python error"   # Search conversations
   %(prog)s --search-regex "import.*" # Search with regex
   %(prog)s --format json --all       # Export all as JSON
   %(prog)s --format html --extract 1 # Export session 1 as HTML
   %(prog)s --detailed --extract 1    # Include tool use & system messages
+  %(prog)s --input file.jsonl --format html  # Extract file as HTML
         """,
     )
     parser.add_argument("--list", action="store_true", help="List recent sessions")
@@ -786,6 +1376,13 @@ Examples:
         action="store_true",
         help="Include tool use, MCP responses, and system messages in export"
     )
+    parser.add_argument(
+        "--input",
+        "--file",
+        type=str,
+        dest="input_file",
+        help="Specify input JSONL file path directly (supports relative and absolute paths)"
+    )
 
     args = parser.parse_args()
 
@@ -794,6 +1391,63 @@ Examples:
         from interactive_ui import main as interactive_main
 
         interactive_main()
+        return
+
+    # Handle --input parameter (highest priority)
+    if args.input_file:
+        # Validate input file
+        input_path = Path(args.input_file)
+        
+        # Check if file exists
+        if not input_path.exists():
+            print(f"❌ Error: File not found: {input_path}")
+            print(f"   Please check the file path and try again.")
+            return
+        
+        # Check if it's a file (not a directory)
+        if not input_path.is_file():
+            print(f"❌ Error: Path is not a file: {input_path}")
+            return
+        
+        # Check file extension (optional but recommended)
+        if input_path.suffix.lower() != ".jsonl":
+            print(f"⚠️  Warning: File extension is '{input_path.suffix}', expected '.jsonl'")
+            response = input("Continue anyway? (y/N): ").strip().lower()
+            if response != 'y':
+                print("👋 Cancelled")
+                return
+        
+        # Initialize extractor with optional output directory
+        extractor = ClaudeConversationExtractor(args.output)
+        
+        # Extract conversation from the specified file
+        print(f"\n📤 Extracting from: {input_path}")
+        print(f"   Format: {args.format.upper()}")
+        if args.detailed:
+            print("   📋 Including detailed tool use and system messages")
+        
+        conversation = extractor.extract_conversation(input_path, detailed=args.detailed)
+        
+        if not conversation:
+            print("❌ No conversation found in the file")
+            return
+        
+        # Get session ID from filename
+        session_id = input_path.stem
+        
+        # Save in the requested format
+        output_path = extractor.save_conversation(
+            conversation, 
+            session_id, 
+            format=args.format
+        )
+        
+        if output_path:
+            print(f"✅ Successfully extracted {len(conversation)} messages")
+            print(f"   Saved to: {output_path}")
+        else:
+            print("❌ Failed to save conversation")
+        
         return
 
     # Initialize extractor with optional output directory
