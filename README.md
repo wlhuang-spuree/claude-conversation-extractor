@@ -122,7 +122,7 @@ claude-extract --file ./conversations/session.jsonl
 
 # Extract by session ID (searches automatically in ~/.claude/projects)
 claude-extract --session-id ea6be090-25d9-4950-a98b-8b426d1d8280
-claude-extract --session-id ea6be090-25d9-4950-a98b-8b426d1d8280 --format html --open
+claude-extract -s ea6be090-25d9-4950-a98b-8b426d1d8280 --format html --open
 
 # Save Claude logs to custom location
 claude-extract --output ~/my-claude-backups
@@ -148,9 +148,9 @@ claude-extract --input file.jsonl --format json
 ```
 
 **Supported Formats:**
-- **Markdown** (default) - Clean, readable text format
+- **HTML** (default) - Beautiful web-viewable format with syntax highlighting
+- **Markdown** - Clean, readable text format
 - **JSON** - Structured data for analysis and processing
-- **HTML** - Beautiful web-viewable format with syntax highlighting
 
 **Auto-Open (`--open`):**
 Automatically opens the generated file after extraction completes using your system's default application.
@@ -188,11 +188,12 @@ claude-extract
 
 ### Exported Claude Conversation Locations:
 ```text
-~/Desktop/Claude logs/claude-conversation-2025-06-09-abc123.md
+# Default location (when --output not specified)
+{system_temp_dir}/claude-logs/claude-conversation-2025-06-09-abc123.html
 ├── Metadata (session ID, timestamp)
 ├── User messages with 👤 prefix
 ├── Claude responses with 🤖 prefix
-└── Clean Markdown formatting
+└── HTML formatting with syntax highlighting
 ```
 
 ## ❓ Frequently Asked Questions
@@ -220,10 +221,10 @@ No, this tool specifically exports Claude Code (desktop app) conversations. Clau
 
 ### Can I convert Claude JSONL to other formats?
 Yes! Version 1.1.1 supports multiple export formats:
-- **Markdown** - Default clean text format
+- **HTML** - Default beautiful web-viewable format with modern styling
+- **Markdown** - Clean text format
 - **JSON** - Structured data with timestamps and metadata  
-- **HTML** - Beautiful web-viewable format with modern styling
-Use `--format json` or `--format html` when extracting.
+Use `--format markdown` or `--format json` when extracting.
 
 ### Can I extract from a specific JSONL file?
 Yes! You have two options:
@@ -234,9 +235,10 @@ claude-extract --input file.jsonl --format html
 claude-extract --file ~/.claude/projects/my-project/chat_123.jsonl
 ```
 
-2. **By session ID** - Use the `--session-id` parameter (automatically searches in ~/.claude/projects):
+2. **By session ID** - Use the `--session-id` or `-s` parameter (automatically searches in ~/.claude/projects):
 ```bash
 claude-extract --session-id ea6be090-25d9-4950-a98b-8b426d1d8280 --format html
+claude-extract -s ea6be090-25d9-4950-a98b-8b426d1d8280 --format html
 ```
 
 The `--session-id` option is useful when you know the session ID from Claude Code's `/status` command and want to extract without finding the file path manually.
