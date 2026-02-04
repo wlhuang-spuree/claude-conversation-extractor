@@ -12,6 +12,7 @@ import json
 import os
 import platform
 import subprocess
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Any
@@ -28,30 +29,10 @@ class ClaudeConversationExtractor:
             self.output_dir = Path(output_dir)
             self.output_dir.mkdir(parents=True, exist_ok=True)
         else:
-            # Try multiple possible output directories
-            possible_dirs = [
-                Path.home() / "Desktop" / "Claude logs",
-                Path.home() / "Documents" / "Claude logs",
-                Path.home() / "Claude logs",
-                Path.cwd() / "claude-logs",
-            ]
-
-            # Use the first directory we can create
-            for dir_path in possible_dirs:
-                try:
-                    dir_path.mkdir(parents=True, exist_ok=True)
-                    # Test if we can write to it
-                    test_file = dir_path / ".test"
-                    test_file.touch()
-                    test_file.unlink()
-                    self.output_dir = dir_path
-                    break
-                except Exception:
-                    continue
-            else:
-                # Fallback to current directory
-                self.output_dir = Path.cwd() / "claude-logs"
-                self.output_dir.mkdir(exist_ok=True)
+            # Use system temporary directory
+            tmp_dir = Path(tempfile.gettempdir())
+            self.output_dir = tmp_dir / "claude-logs"
+            self.output_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"📁 Saving logs to: {self.output_dir}")
 
@@ -1367,7 +1348,6 @@ Examples:
         "--interactive",
         "-i",
         "--start",
-        "-s",
         action="store_true",
         help="Launch interactive UI for easy extraction",
     )
@@ -1404,8 +1384,8 @@ Examples:
     parser.add_argument(
         "--format",
         choices=["markdown", "json", "html"],
-        default="markdown",
-        help="Output format for exported conversations (default: markdown)"
+        default="html",
+        help="Output format for exported conversations (default: html)"
     )
     parser.add_argument(
         "--open",
@@ -1422,6 +1402,7 @@ Examples:
     parser.add_argument(
         "--session-id",
         "--session",
+        "-s",
         type=str,
         dest="session_id",
         help="Find and extract session by session ID (searches in ~/.claude/projects)"
