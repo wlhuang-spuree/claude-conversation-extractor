@@ -66,8 +66,8 @@ uv tool install git+https://github.com/wlhuang-spuree/claude-conversation-extrac
 - Select from File 
    1. cd into `~\.claude\projects` or `%USERPROFILE%\.claude\projects`
    2. copy the fullpath of target file (`.jsonl`)
-   3. command `claude-extract --format html --detailed --output ./claude_exports --input "C:\Users\alan\.claude\projects\E--spuree-misc\ea6be090-25d9-4950-a98b-8b426d1d8280.jsonl"`
-    Quick snippet: `claude-extract --format html --detailed --output ./claude_exports --input $input`
+   3. command `claude-extract --format html --output ./claude_exports --input "C:\Users\alan\.claude\projects\E--spuree-misc\ea6be090-25d9-4950-a98b-8b426d1d8280.jsonl"`
+     Quick snippet: `claude-extract --format html --output ./claude_exports --input $input`
 - Select from session ID
    1. in Claude Code, enter target session and cmd `/status`:
    ```
@@ -80,7 +80,7 @@ uv tool install git+https://github.com/wlhuang-spuree/claude-conversation-extrac
     >>> Session ID: ea6be090-25d9-4950-a98b-8b426d1d8280 <<<
     cwd: E:\spuree\misc
    ```
-    2. `claude-extract --format html --detailed --output ./claude_exports --session $session_id`
+    2. `claude-extract --format html --output ./claude_exports --session $session_id`
 
 ### Quick Start - Realtime CLI
 ```bash
@@ -122,7 +122,7 @@ claude-extract --file ./conversations/session.jsonl
 
 # Extract by session ID (searches automatically in ~/.claude/projects)
 claude-extract --session-id ea6be090-25d9-4950-a98b-8b426d1d8280
-claude-extract --session-id ea6be090-25d9-4950-a98b-8b426d1d8280 --format html --detailed
+claude-extract --session-id ea6be090-25d9-4950-a98b-8b426d1d8280 --format html --open
 
 # Save Claude logs to custom location
 claude-extract --output ~/my-claude-backups
@@ -136,15 +136,15 @@ claude-extract --format json --extract 1
 # Export as HTML with beautiful formatting
 claude-extract --format html --all
 
-# Include tool use, MCP responses, and system messages
-claude-extract --detailed --extract 1
+# Extract and automatically open the file
+claude-extract --extract 1 --open
 
 # Combine options for complete exports
-claude-extract --format html --detailed --recent 5
+claude-extract --format html --recent 5 --open
 
 # Extract from a specific file with custom format
-claude-extract --input file.jsonl --format html
-claude-extract --input file.jsonl --format json --detailed
+claude-extract --input file.jsonl --format html --open
+claude-extract --input file.jsonl --format json
 ```
 
 **Supported Formats:**
@@ -152,13 +152,10 @@ claude-extract --input file.jsonl --format json --detailed
 - **JSON** - Structured data for analysis and processing
 - **HTML** - Beautiful web-viewable format with syntax highlighting
 
-**Detailed Mode (`--detailed`):**
-Includes complete conversation transcript with:
-- Tool use invocations and parameters
-- MCP server responses
-- System messages and errors
-- Terminal command outputs
-- All metadata from the conversation
+**Auto-Open (`--open`):**
+Automatically opens the generated file after extraction completes using your system's default application.
+
+**Note:** All exports now include detailed information by default (tool use, MCP responses, system messages, etc.)
 
 ### 🔍 Search Claude Code Chat History
 
@@ -204,11 +201,10 @@ claude-extract
 Install with `pip install git+https://github.com/wlhuang-spuree/claude-conversation-extractor.git` or `uv tool install git+https://github.com/wlhuang-spuree/claude-conversation-extractor.git` then run `claude-extract`. The tool automatically finds all conversations in ~/.claude/projects.
 
 ### How do I export the detailed transcript with tool use?
-Use the `--detailed` flag to include tool invocations, MCP responses, terminal outputs, and system messages:
+All exports now include detailed information by default (tool invocations, MCP responses, terminal outputs, and system messages). This gives you the complete conversation as seen in Claude's Ctrl+R view. Use `--open` to automatically open the file after extraction:
 ```bash
-claude-extract --detailed --format html --extract 1
+claude-extract --format html --extract 1 --open
 ```
-This gives you the complete conversation as seen in Claude's Ctrl+R view.
 
 ### Where does Claude Code store conversations?
 Claude Code saves all chats in `~/.claude/projects/` as JSONL files. There's no built-in export feature - that's why this tool exists.

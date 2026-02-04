@@ -9,6 +9,9 @@ readable markdown files.
 
 import argparse
 import json
+import os
+import platform
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Any
@@ -1304,6 +1307,23 @@ class ClaudeConversationExtractor:
         return success, total
 
 
+def open_file(file_path: Path) -> None:
+    """Open a file using the system's default application.
+    
+    Args:
+        file_path: Path to the file to open
+    """
+    try:
+        if platform.system() == "Windows":
+            os.startfile(str(file_path))
+        elif platform.system() == "Darwin":  # macOS
+            subprocess.run(["open", str(file_path)])
+        else:  # Linux and other Unix-like systems
+            subprocess.run(["xdg-open", str(file_path)])
+    except Exception as e:
+        print(f"⚠️ Cannot open file automatically: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Extract Claude Code conversations to clean markdown files",
@@ -1321,8 +1341,8 @@ Examples:
   %(prog)s --search-regex "import.*" # Search with regex
   %(prog)s --format json --all       # Export all as JSON
   %(prog)s --format html --extract 1 # Export session 1 as HTML
-  %(prog)s --detailed --extract 1    # Include tool use & system messages
   %(prog)s --input file.jsonl --format html  # Extract file as HTML
+  %(prog)s --extract 1 --open        # Extract and open the file automatically
         """,
     )
     parser.add_argument("--list", action="store_true", help="List recent sessions")
@@ -1388,9 +1408,9 @@ Examples:
         help="Output format for exported conversations (default: markdown)"
     )
     parser.add_argument(
-        "--detailed",
+        "--open",
         action="store_true",
-        help="Include tool use, MCP responses, and system messages in export"
+        help="Automatically open the exported file after extraction completes"
     )
     parser.add_argument(
         "--input",
@@ -1446,10 +1466,9 @@ Examples:
         # Extract conversation from the specified file
         print(f"\n📤 Extracting from: {input_path}")
         print(f"   Format: {args.format.upper()}")
-        if args.detailed:
-            print("   📋 Including detailed tool use and system messages")
+        print("   📋 Including detailed tool use and system messages")
         
-        conversation = extractor.extract_conversation(input_path, detailed=args.detailed)
+        conversation = extractor.extract_conversation(input_path, detailed=True)
         
         if not conversation:
             print("❌ No conversation found in the file")
@@ -1491,10 +1510,9 @@ Examples:
         print(f"\n📤 Extracting from: {session_path}")
         print(f"   Session ID: {args.session_id}")
         print(f"   Format: {args.format.upper()}")
-        if args.detailed:
-            print("   📋 Including detailed tool use and system messages")
+        print("   📋 Including detailed tool use and system messages")
         
-        conversation = extractor.extract_conversation(session_path, detailed=args.detailed)
+        conversation = extractor.extract_conversation(session_path, detailed=True)
         
         if not conversation:
             print("❌ No conversation found in the file")
@@ -1510,6 +1528,8 @@ Examples:
         if output_path:
             print(f"✅ Successfully extracted {len(conversation)} messages")
             print(f"   Saved to: {output_path}")
+            if args.open:
+                open_file(output_path)
         else:
             print("❌ Failed to save conversation")
         
@@ -1599,12 +1619,12 @@ Examples:
                     view_num = int(view_choice)
                     if 1 <= view_num <= len(file_paths_list):
                         selected_path = file_paths_list[view_num - 1]
-                        extractor.display_conversation(selected_path, detailed=args.detailed)
+                        extractor.display_conversation(selected_path, detailed=True)
                         
                         # Offer to extract after viewing
                         extract_choice = input("\n📤 Extract this conversation? (y/N): ").strip().lower()
                         if extract_choice == 'y':
-                            conversation = extractor.extract_conversation(selected_path, detailed=args.detailed)
+                            conversation = extractor.extract_conversation(selected_path, detailed=True)
                             if conversation:
                                 session_id = selected_path.stem
                                 if args.format == "json":
@@ -1614,6 +1634,8 @@ Examples:
                                 else:
                                     output = extractor.save_as_markdown(conversation, session_id)
                                 print(f"✅ Saved: {output.name}")
+                                if args.open and output:
+                                    open_file(output)
             except (EOFError, KeyboardInterrupt):
                 print("\n👋 Cancelled")
         
@@ -1650,37 +1672,61 @@ Examples:
 
         if indices:
             print(f"\n📤 Extracting {len(indices)} session(s) as {args.format.upper()}...")
-            if args.detailed:
-                print("📋 Including detailed tool use and system messages")
+            print("📋 Including detailed tool use and system messages")
             success, total = extractor.extract_multiple(
-                sessions, indices, format=args.format, detailed=args.detailed
+                sessions, indices, format=args.format, detailed=True
             )
             print(f"\n✅ Successfully extracted {success}/{total} sessions")
+            # Open the last extracted file if --open is specified
+            if args.open and success > 0:
+                output_files = sorted(
+                    extractor.output_dir.glob(f"claude-conversation-*.{args.format}"),
+                    key=lambda x: x.stat().st_mtime,
+                    reverse=True
+                )
+                if output_files:
+                    open_file(output_files[0])
 
     elif args.recent:
         sessions = extractor.find_sessions()
         limit = min(args.recent, len(sessions))
         print(f"\n📤 Extracting {limit} most recent sessions as {args.format.upper()}...")
-        if args.detailed:
-            print("📋 Including detailed tool use and system messages")
+        print("📋 Including detailed tool use and system messages")
 
         indices = list(range(limit))
         success, total = extractor.extract_multiple(
-            sessions, indices, format=args.format, detailed=args.detailed
+            sessions, indices, format=args.format, detailed=True
         )
         print(f"\n✅ Successfully extracted {success}/{total} sessions")
+        # Open the last extracted file if --open is specified
+        if args.open and success > 0:
+            output_files = sorted(
+                extractor.output_dir.glob(f"claude-conversation-*.{args.format}"),
+                key=lambda x: x.stat().st_mtime,
+                reverse=True
+            )
+            if output_files:
+                open_file(output_files[0])
 
     elif args.all:
         sessions = extractor.find_sessions()
         print(f"\n📤 Extracting all {len(sessions)} sessions as {args.format.upper()}...")
-        if args.detailed:
-            print("📋 Including detailed tool use and system messages")
+        print("📋 Including detailed tool use and system messages")
 
         indices = list(range(len(sessions)))
         success, total = extractor.extract_multiple(
-            sessions, indices, format=args.format, detailed=args.detailed
+            sessions, indices, format=args.format, detailed=True
         )
         print(f"\n✅ Successfully extracted {success}/{total} sessions")
+        # Open the last extracted file if --open is specified
+        if args.open and success > 0:
+            output_files = sorted(
+                extractor.output_dir.glob(f"claude-conversation-*.{args.format}"),
+                key=lambda x: x.stat().st_mtime,
+                reverse=True
+            )
+            if output_files:
+                open_file(output_files[0])
 
 
 def launch_interactive():
