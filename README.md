@@ -60,14 +60,27 @@ pip install git+https://github.com/wlhuang-spuree/claude-conversation-extractor.
 uv tool install git+https://github.com/wlhuang-spuree/claude-conversation-extractor.git
 ```
 
+### Upgrade
+
+**Using pip:**
+```bash
+pip install -U git+https://github.com/wlhuang-spuree/claude-conversation-extractor.git
+```
+
+**Using uv:**
+```bash
+uv tool upgrade claude-conversation-extractor
+```
+
 ## 🚀 How to Export Claude Code Conversations
 
 ### Quick Start - Directly From File
 - Select from File 
    1. cd into `~\.claude\projects` or `%USERPROFILE%\.claude\projects`
    2. copy the fullpath of target file (`.jsonl`)
-   3. command `claude-extract --format html --output ./claude_exports --input "C:\Users\alan\.claude\projects\E--spuree-misc\ea6be090-25d9-4950-a98b-8b426d1d8280.jsonl"`
-     Quick snippet: `claude-extract --format html --output ./claude_exports --input $input`
+   3. command `claude-extract --output ./claude_exports --input "C:\Users\alan\.claude\projects\E--spuree-misc\ea6be090-25d9-4950-a98b-8b426d1d8280.jsonl"`
+     Quick snippet: `claude-extract --output ./claude_exports --input $input`
+     (Note: `--format html` is the default format)
 - Select from session ID
    1. in Claude Code, enter target session and cmd `/status`:
    ```
@@ -80,7 +93,8 @@ uv tool install git+https://github.com/wlhuang-spuree/claude-conversation-extrac
     >>> Session ID: ea6be090-25d9-4950-a98b-8b426d1d8280 <<<
     cwd: E:\spuree\misc
    ```
-    2. `claude-extract --format html --output ./claude_exports --session $session_id`
+    2. `claude-extract --output ./claude_exports -s $session_id`
+     (Note: `-s` is short for `--session`, `--format html` is the default format)
 
 ### Quick Start - Realtime CLI
 ```bash
