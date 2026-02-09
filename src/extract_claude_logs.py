@@ -12,10 +12,35 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Any
+
+
+def setup_utf8_encoding():
+    """Configure stdout and stderr to use UTF-8 encoding to support emoji and special characters."""
+    if platform.system() == "Windows":
+        try:
+            # Python 3.7+ supports reconfigure
+            if hasattr(sys.stdout, 'reconfigure'):
+                sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+            if hasattr(sys.stderr, 'reconfigure'):
+                sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError):
+            # If reconfigure is not available, try wrapping with TextIOWrapper
+            try:
+                import io
+                sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+                sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+            except (AttributeError, ValueError):
+                # If all else fails, at least set the environment variable
+                os.environ['PYTHONIOENCODING'] = 'utf-8'
+
+
+# Set encoding when module is loaded
+setup_utf8_encoding()
 
 
 class ClaudeConversationExtractor:
