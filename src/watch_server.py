@@ -449,8 +449,11 @@ class WatchServer:
         const statusBar = document.getElementById('status-bar');
         es.onmessage = function(e) {{
             const html = JSON.parse(e.data);
+            const isAtBottom = (window.innerHeight + window.scrollY) >= document.body.offsetHeight - 100;
             document.getElementById('messages').insertAdjacentHTML('beforeend', html);
-            window.scrollTo(0, document.body.scrollHeight);
+            if (isAtBottom) {{
+                window.scrollTo(0, document.body.scrollHeight);
+            }}
         }};
         es.onerror = function() {{
             statusBar.textContent = '\U0001f534 Disconnected \u2014 reload to reconnect';
