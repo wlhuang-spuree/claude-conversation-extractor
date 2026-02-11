@@ -1349,6 +1349,8 @@ Examples:
   %(prog)s --format html --extract 1 # Export session 1 as HTML
   %(prog)s --input file.jsonl --format html  # Extract file as HTML
   %(prog)s --extract 1 --open        # Extract and open the file automatically
+  %(prog)s -s abc12345 --watch       # Live HTML watch (auto-opens browser)
+  %(prog)s -s abc12345 --watch --port 9000  # Watch on custom port
         """,
     )
     parser.add_argument("--list", action="store_true", help="List recent sessions")
@@ -1432,6 +1434,17 @@ Examples:
         dest="session_id",
         help="Find and extract session by session ID (searches in ~/.claude/projects)"
     )
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="Start a live-updating HTML watch server instead of exporting"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port for --watch server (default: 8765)"
+    )
 
     args = parser.parse_args()
 
@@ -1469,6 +1482,15 @@ Examples:
         # Initialize extractor with optional output directory
         extractor = ClaudeConversationExtractor(args.output)
         
+        # Watch mode: stream live updates in browser
+        if args.watch:
+            try:
+                from watch_server import WatchServer
+            except ImportError:
+                from .watch_server import WatchServer
+            WatchServer(input_path, port=args.port).start()
+            return
+
         # Extract conversation from the specified file
         print(f"\n📤 Extracting from: {input_path}")
         print(f"   Format: {args.format.upper()}")
@@ -1512,6 +1534,15 @@ Examples:
             print(f"   Please check the session ID and try again.")
             return
         
+        # Watch mode: stream live updates in browser
+        if args.watch:
+            try:
+                from watch_server import WatchServer
+            except ImportError:
+                from .watch_server import WatchServer
+            WatchServer(session_path, port=args.port).start()
+            return
+
         # Extract conversation from the found file
         print(f"\n📤 Extracting from: {session_path}")
         print(f"   Session ID: {args.session_id}")
@@ -1733,6 +1764,13 @@ Examples:
             )
             if output_files:
                 open_file(output_files[0])
+
+
+def launch_watch():
+    """Entry point for claude-watch: --watch is implied so you don't have to type it."""
+    if "--watch" not in sys.argv:
+        sys.argv.append("--watch")
+    main()
 
 
 def launch_interactive():

@@ -35,6 +35,7 @@ This is the **ONLY tool that exports Claude Code conversations**:
 - **📝 Claude JSONL to Markdown**: Clean export without terminal artifacts
 - **⚡ Find Any Chat**: Search by content, date, or conversation name
 - **📦 Bulk Export**: Extract all Claude Code conversations at once
+- **👁 Live Watch Mode**: `claude-watch -s <id>` streams a live-updating HTML view as Claude Code writes new messages
 - **🎯 Zero Config**: Just run `claude-extract` - we find everything automatically
 - **🚀 No Dependencies**: Pure Python - no external packages required
 - **🖥️ Cross-Platform**: Export Claude Code logs on any OS
@@ -137,6 +138,12 @@ claude-extract --file ./conversations/session.jsonl
 # Extract by session ID (searches automatically in ~/.claude/projects)
 claude-extract --session-id ea6be090-25d9-4950-a98b-8b426d1d8280
 claude-extract -s ea6be090-25d9-4950-a98b-8b426d1d8280 --format html --open
+
+# Live watch: open a browser that updates as Claude Code writes new messages
+claude-watch -s ea6be090-25d9-4950-a98b-8b426d1d8280
+claude-watch --input file.jsonl --port 9000
+# (--watch is also accepted on claude-extract)
+claude-extract -s ea6be090-25d9-4950-a98b-8b426d1d8280 --watch
 
 # Save Claude logs to custom location
 claude-extract --output ~/my-claude-backups
@@ -256,6 +263,13 @@ claude-extract -s ea6be090-25d9-4950-a98b-8b426d1d8280 --format html
 ```
 
 The `--session-id` option is useful when you know the session ID from Claude Code's `/status` command and want to extract without finding the file path manually.
+
+### Can I watch a conversation update live in the browser?
+Yes! Use `claude-watch` with a session ID or file path. A local HTTP server starts, opens your browser, and pushes new messages via Server-Sent Events as Claude Code appends to the JSONL file:
+```bash
+claude-watch -s ea6be090-25d9-4950-a98b-8b426d1d8280
+claude-watch --input file.jsonl --port 9000
+```
 
 ### Is this tool official?
 No, this is an independent open-source tool. It reads the local Claude Code files on your computer - no API or internet required.
