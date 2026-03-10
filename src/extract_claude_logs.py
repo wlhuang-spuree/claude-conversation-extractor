@@ -206,6 +206,7 @@ class ClaudeConversationExtractor:
                                             "role": "assistant",
                                             "content": rich_content,
                                             "timestamp": entry.get("timestamp", ""),
+                                            "usage": msg.get("usage", {}),
                                         }
                                     )
                         
@@ -290,7 +291,8 @@ class ClaudeConversationExtractor:
                                                     "subagent_type": subagent_type,
                                                     "parent_tool_use_id": parent_tool_use_id
                                                 },
-                                                "timestamp": message_data.get("timestamp", entry.get("timestamp", ""))
+                                                "timestamp": message_data.get("timestamp", entry.get("timestamp", "")),
+                                                "usage": msg.get("usage", {}),
                                             })
                         
                         # Include tool use and system messages if detailed mode
@@ -367,6 +369,21 @@ class ClaudeConversationExtractor:
                             part["tool_name"] = tool_name
         
         return content
+
+    def _sum_usage(self, conversation: List[Dict]) -> Dict[str, int]:
+        """Sum token usage across all messages. input = input_tokens + cache_read_input_tokens."""
+        total = {"input": 0, "output": 0}
+        for msg in conversation:
+            u = msg.get("usage") or {}
+            total["input"] += u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
+            total["output"] += u.get("output_tokens", 0)
+        return total
+
+    def _format_usage_line(self, usage: Dict) -> str:
+        """Format usage as: Token Usage: {input} | {output}"""
+        inp = usage.get("input_tokens", 0) + usage.get("cache_read_input_tokens", 0)
+        out = usage.get("output_tokens", 0)
+        return f"Token Usage: {inp} | {out}"
     
     def _extract_text_content(self, content, detailed: bool = False) -> str:
         """Extract text from various content formats Claude uses (legacy method).
@@ -834,13 +851,16 @@ class ClaudeConversationExtractor:
         filename = f"claude-conversation-{date_str}-{session_id[:8]}.md"
         output_path = self.output_dir / filename
 
+        totals = self._sum_usage(conversation)
+
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("# Claude Conversation Log\n\n")
             f.write(f"Session ID: {session_id}\n")
             f.write(f"Date: {date_str}")
             if time_str:
                 f.write(f" {time_str}")
-            f.write("\n\n---\n\n")
+            f.write("\n")
+            f.write(f"**Total Tokens:** input {totals['input']/1e6:.2f}M | output {totals['output']/1e6:.2f}M\n\n---\n\n")
 
             for msg in conversation:
                 role = msg["role"]
@@ -858,6 +878,8 @@ class ClaudeConversationExtractor:
                 elif role == "assistant":
                     f.write("## 🤖 Claude\n\n")
                     f.write(f"{display_content}\n\n")
+                    if msg.get("usage"):
+                        f.write(f"*📊 {self._format_usage_line(msg['usage'])}*\n\n")
                 elif role == "subagent_user":
                     metadata = msg.get("metadata", {})
                     agent_id = metadata.get("agent_id", "unknown")
@@ -872,6 +894,8 @@ class ClaudeConversationExtractor:
                     subagent_display = f"{subagent_type.upper()}" if subagent_type else f"{agent_id[:8]}..."
                     f.write(f"## 🤖 Subagent ({subagent_display}) - Assistant\n\n")
                     f.write(f"{display_content}\n\n")
+                    if msg.get("usage"):
+                        f.write(f"*📊 {self._format_usage_line(msg['usage'])}*\n\n")
                 elif role == "tool_use":
                     f.write("### 🔧 Tool Use\n\n")
                     f.write(f"{display_content}\n\n")
@@ -914,6 +938,7 @@ class ClaudeConversationExtractor:
             "session_id": session_id,
             "date": date_str,
             "message_count": len(conversation),
+            "total_usage": self._sum_usage(conversation),
             "messages": conversation
         }
 
@@ -945,6 +970,8 @@ class ClaudeConversationExtractor:
 
         filename = f"claude-conversation-{date_str}-{session_id[:8]}.html"
         output_path = self.output_dir / filename
+
+        totals = self._sum_usage(conversation)
 
         # HTML template with modern styling
         html_content = f"""<!DOCTYPE html>
@@ -1116,6 +1143,11 @@ class ClaudeConversationExtractor:
             border-radius: 3px;
             font-family: 'Courier New', monospace;
         }}
+        .token-usage {{
+            margin-top: 8px;
+            font-size: 0.82em;
+            color: #666;
+        }}
     </style>
 </head>
 <body>
@@ -1125,6 +1157,7 @@ class ClaudeConversationExtractor:
             <p>Session ID: {session_id}</p>
             <p>Date: {date_str} {time_str}</p>
             <p>Messages: {len(conversation)}</p>
+            <p>Total Tokens: input {totals['input']/1e6:.2f}M | output {totals['output']/1e6:.2f}M</p>
         </div>
     </div>
 """
@@ -1164,6 +1197,8 @@ class ClaudeConversationExtractor:
                 f.write(f'    <div class="message {role}">\n')
                 f.write(f'        <div class="role">{role_display}</div>\n')
                 f.write(f'        <div class="content">{rendered_content}</div>\n')
+                if msg.get("usage"):
+                    f.write(f'        <div class="token-usage">📊 {self._format_usage_line(msg["usage"])}</div>\n')
                 f.write(f'    </div>\n')
             
             f.write("\n</body>\n</html>")

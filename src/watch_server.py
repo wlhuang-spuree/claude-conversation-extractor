@@ -165,6 +165,11 @@ _CSS = """
             border-radius: 3px;
             font-family: 'Courier New', monospace;
         }
+        .token-usage {
+            margin-top: 8px;
+            font-size: 0.82em;
+            color: #666;
+        }
         #status-bar {
             position: fixed;
             bottom: 12px;
@@ -296,6 +301,7 @@ class WatchServer:
                         "role": "assistant",
                         "content": rich,
                         "timestamp": entry.get("timestamp", ""),
+                        "usage": msg.get("usage", {}),
                     }
 
         elif entry_type == "progress":
@@ -339,6 +345,7 @@ class WatchServer:
                                     "timestamp": message_data.get(
                                         "timestamp", entry.get("timestamp", "")
                                     ),
+                                    "usage": msg.get("usage", {}),
                                 }
 
         return None
@@ -370,12 +377,17 @@ class WatchServer:
                 "system": "ℹ️ System",
             }.get(role, role)
 
-        return (
-            f'    <div class="message {role}">\n'
-            f"        <div class=\"role\">{role_display}</div>\n"
-            f'        <div class="content">{rendered}</div>\n'
-            f"    </div>\n"
-        )
+        parts = [
+            f'    <div class="message {role}">\n',
+            f"        <div class=\"role\">{role_display}</div>\n",
+            f'        <div class="content">{rendered}</div>\n',
+        ]
+        if msg.get("usage"):
+            parts.append(
+                f'        <div class="token-usage">📊 {self._extractor._format_usage_line(msg["usage"])}</div>\n'
+            )
+        parts.append(f"    </div>\n")
+        return "".join(parts)
 
     # ------------------------------------------------------------------ #
     # File loading
@@ -421,6 +433,7 @@ class WatchServer:
     def _build_initial_html(self, conversation: list) -> str:
         session_id = self.jsonl_path.stem
         messages_html = "".join(self._render_message_html(m) for m in conversation)
+        totals = self._extractor._sum_usage(conversation)
 
         return f"""<!DOCTYPE html>
 <html lang="en">
@@ -438,6 +451,7 @@ class WatchServer:
             <p>Session: {session_id}</p>
             <p>File: {self.jsonl_path}</p>
             <p>Messages at load: {len(conversation)}</p>
+            <p>Total Tokens: input {totals['input']/1e6:.2f}M | output {totals['output']/1e6:.2f}M</p>
         </div>
     </div>
     <div id="messages">
