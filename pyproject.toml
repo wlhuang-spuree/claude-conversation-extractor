@@ -40,7 +40,10 @@ keywords = [
     "export-claude-conversations", "extract-claude-code", "backup-claude-sessions"
 ]
 requires-python = ">=3.8"
-dependencies = []
+dependencies = [
+    "markdown>=3.5",
+    "bleach>=6.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/ZeroSumQuant/claude-conversation-extractor"

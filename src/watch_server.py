@@ -79,6 +79,32 @@ _CSS = """
             word-wrap: break-word;
         }
         .content-text { margin: 5px 0; }
+        .markdown-body {
+            white-space: normal;
+            word-wrap: break-word;
+        }
+        .markdown-body p { margin: 0.5em 0; }
+        .markdown-body ul, .markdown-body ol { margin: 0.5em 0; padding-left: 1.5em; }
+        .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+            margin: 0.75em 0 0.5em; font-weight: bold;
+        }
+        .markdown-body h1 { font-size: 1.3em; }
+        .markdown-body h2 { font-size: 1.15em; }
+        .markdown-body h3 { font-size: 1.05em; }
+        .markdown-body pre { margin: 0.5em 0; }
+        .markdown-body blockquote { margin: 0.5em 0; padding-left: 1em; border-left: 3px solid #ccc; color: #666; }
+        .markdown-body table { border-collapse: collapse; margin: 0.5em 0; }
+        .markdown-body th, .markdown-body td { border: 1px solid #ddd; padding: 4px 8px; }
+        .markdown-body a { color: #3498db; }
+        .markdown-body hr { margin: 1em 0; border: none; border-top: 1px solid #ddd; }
+        .thinking-content.markdown-body {
+            white-space: normal;
+            font-family: inherit;
+        }
+        .tool-result-content.markdown-body {
+            white-space: normal;
+            font-family: inherit;
+        }
         .content-thinking {
             background: #f0f7ff;
             border-left: 3px solid #4a90e2;

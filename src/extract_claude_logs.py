@@ -18,6 +18,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Any
 
+import bleach
+import markdown
+
 
 def setup_utf8_encoding():
     """Configure stdout and stderr to use UTF-8 encoding to support emoji and special characters."""
@@ -559,7 +562,27 @@ class ClaudeConversationExtractor:
                    .replace(">", "&gt;")
                    .replace('"', "&quot;")
                    .replace("'", "&#x27;"))
-    
+
+    def _markdown_to_html(self, text: str) -> str:
+        """Convert markdown to HTML with sanitization (safe for embedding)."""
+        if not text or not text.strip():
+            return ""
+        html = markdown.markdown(
+            text,
+            extensions=["fenced_code", "tables", "nl2br", "sane_lists"],
+        )
+        return bleach.clean(
+            html,
+            tags={
+                "p", "br", "strong", "em", "b", "i", "u", "s",
+                "code", "pre", "ul", "ol", "li", "blockquote",
+                "h1", "h2", "h3", "h4", "h5", "h6",
+                "a", "hr", "table", "thead", "tbody", "tr", "th", "td",
+            },
+            attributes={"a": ["href", "title"]},
+            strip=True,
+        )
+
     def _render_content_to_html(self, content: Union[str, Dict[str, Any]]) -> str:
         """Render content to HTML format.
         
@@ -580,12 +603,12 @@ class ClaudeConversationExtractor:
         for part in parts:
             part_type = part.get("type")
             if part_type == "text":
-                html_parts.append(f'<div class="content-text">{self._escape_html(part["text"])}</div>')
+                html_parts.append(f'<div class="content-text markdown-body">{self._markdown_to_html(part["text"])}</div>')
             elif part_type == "thinking":
                 html_parts.append(
                     f'<div class="content-thinking">'
                     f'<div class="thinking-header">Thinking Process</div>'
-                    f'<div class="thinking-content">{self._escape_html(part["thinking"])}</div>'
+                    f'<div class="thinking-content markdown-body">{self._markdown_to_html(part["thinking"])}</div>'
                     f'</div>'
                 )
             elif part_type == "tool_use":
@@ -633,7 +656,7 @@ class ClaudeConversationExtractor:
                 if isinstance(content_part, dict):
                     content_type = content_part.get("type")
                     if content_type == "text":
-                        html_parts.append(f'<div class="tool-result-content">{self._escape_html(content_part.get("text", ""))}</div>')
+                        html_parts.append(f'<div class="tool-result-content markdown-body">{self._markdown_to_html(content_part.get("text", ""))}</div>')
                     elif content_type == "image":
                         source = content_part.get("source", {})
                         if "data" in source and content_part.get("has_full_data"):
@@ -658,7 +681,7 @@ class ClaudeConversationExtractor:
                 
                 html_parts.append(f'</div>')
         
-        return "\n".join(html_parts) if html_parts else self._escape_html(content.get("text", ""))
+        return "\n".join(html_parts) if html_parts else self._markdown_to_html(content.get("text", ""))
     
     def _render_content_to_markdown(self, content: Union[str, Dict[str, Any]]) -> str:
         """Render content to Markdown format.
@@ -1046,6 +1069,32 @@ class ClaudeConversationExtractor:
         }}
         .content-text {{
             margin: 5px 0;
+        }}
+        .markdown-body {{
+            white-space: normal;
+            word-wrap: break-word;
+        }}
+        .markdown-body p {{ margin: 0.5em 0; }}
+        .markdown-body ul, .markdown-body ol {{ margin: 0.5em 0; padding-left: 1.5em; }}
+        .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 {{
+            margin: 0.75em 0 0.5em; font-weight: bold;
+        }}
+        .markdown-body h1 {{ font-size: 1.3em; }}
+        .markdown-body h2 {{ font-size: 1.15em; }}
+        .markdown-body h3 {{ font-size: 1.05em; }}
+        .markdown-body pre {{ margin: 0.5em 0; }}
+        .markdown-body blockquote {{ margin: 0.5em 0; padding-left: 1em; border-left: 3px solid #ccc; color: #666; }}
+        .markdown-body table {{ border-collapse: collapse; margin: 0.5em 0; }}
+        .markdown-body th, .markdown-body td {{ border: 1px solid #ddd; padding: 4px 8px; }}
+        .markdown-body a {{ color: #3498db; }}
+        .markdown-body hr {{ margin: 1em 0; border: none; border-top: 1px solid #ddd; }}
+        .thinking-content.markdown-body {{
+            white-space: normal;
+            font-family: inherit;
+        }}
+        .tool-result-content.markdown-body {{
+            white-space: normal;
+            font-family: inherit;
         }}
         .content-thinking {{
             background: #f0f7ff;
