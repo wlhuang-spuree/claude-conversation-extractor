@@ -196,6 +196,13 @@ _CSS = """
             font-size: 0.82em;
             color: #666;
         }
+        .message-accordion { margin-top: 8px; }
+        .message-accordion summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #555;
+            padding: 4px 0;
+        }
         #status-bar {
             position: fixed;
             bottom: 12px;
@@ -403,11 +410,26 @@ class WatchServer:
                 "system": "ℹ️ System",
             }.get(role, role)
 
+        use_accordion = self._extractor._should_use_accordion(content)
+        if use_accordion:
+            is_skill = self._extractor._is_skill_content(content)
+            summary_text = self._extractor._get_skill_summary(content)
+            details_open = "" if is_skill else " open"
+            summary_escaped = self._extractor._escape_html(summary_text)
+
         parts = [
             f'    <div class="message {role}">\n',
             f"        <div class=\"role\">{role_display}</div>\n",
-            f'        <div class="content">{rendered}</div>\n',
         ]
+        if use_accordion:
+            parts.extend([
+                f'        <details class="message-accordion"{details_open}>\n',
+                f'            <summary>{summary_escaped}</summary>\n',
+                f'            <div class="content">{rendered}</div>\n',
+                f'        </details>\n',
+            ])
+        else:
+            parts.append(f'        <div class="content">{rendered}</div>\n')
         if msg.get("usage"):
             parts.append(
                 f'        <div class="token-usage">📊 {self._extractor._format_usage_line(msg["usage"])}</div>\n'
