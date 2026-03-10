@@ -90,12 +90,21 @@ class ClaudeConversationExtractor:
         matches = list(self.claude_dir.rglob(f"{session_id}.jsonl"))
         return matches[0] if matches else None
 
-    def extract_conversation(self, jsonl_path: Path, detailed: bool = False) -> List[Dict[str, str]]:
+    def _find_subagent_file(self, session_id: str, agent_id: str) -> Optional[Path]:
+        """Find subagent JSONL in ~/.claude/projects/.../{session_id}/subagents/agent-{agent_id}.jsonl"""
+        if not self.claude_dir.exists():
+            return None
+        pattern = f"**/{session_id}/subagents/agent-{agent_id}.jsonl"
+        matches = list(self.claude_dir.rglob(pattern))
+        return matches[0] if matches else None
+
+    def extract_conversation(self, jsonl_path: Path, detailed: bool = False, _depth: int = 0) -> List[Dict[str, str]]:
         """Extract conversation messages from a JSONL file.
         
         Args:
             jsonl_path: Path to the JSONL file
             detailed: If True, include tool use, MCP responses, and system messages
+            _depth: Recursion depth for subagent extraction (internal use)
         """
         conversation = []
         # Map tool_use_id to subagent_type for tracking subagent types
@@ -117,6 +126,32 @@ class ClaudeConversationExtractor:
                                 rich_content = self._extract_rich_content(content, detailed=detailed)
                                 # Fill tool_name in tool_result parts
                                 rich_content = self._fill_tool_names(rich_content, tool_use_to_name)
+                                
+                                # Insert subagent log before tool result (when agentId present)
+                                if _depth < 3:
+                                    tool_result_meta = entry.get("toolUseResult")
+                                    if isinstance(tool_result_meta, dict) and tool_result_meta.get("agentId"):
+                                        agent_id = tool_result_meta["agentId"]
+                                        session_id = entry.get("sessionId", jsonl_path.stem)
+                                        subagent_path = self._find_subagent_file(session_id, agent_id)
+                                        if subagent_path and subagent_path.exists():
+                                            tool_use_id = ""
+                                            if isinstance(content, list):
+                                                for item in content:
+                                                    if isinstance(item, dict) and item.get("type") == "tool_result":
+                                                        tool_use_id = item.get("tool_use_id", "")
+                                                        break
+                                            subagent_type = tool_use_to_subagent_type.get(tool_use_id, "")
+                                            subagent_msgs = self.extract_conversation(
+                                                subagent_path, detailed=detailed, _depth=_depth + 1
+                                            )
+                                            for m in subagent_msgs:
+                                                m.setdefault("metadata", {})
+                                                m["metadata"]["agent_id"] = agent_id
+                                                m["metadata"]["subagent_type"] = subagent_type
+                                                if not m["role"].startswith("subagent_"):
+                                                    m["role"] = f"subagent_{m['role']}"
+                                            conversation.extend(subagent_msgs)
                                 
                                 # Check if there's actual content
                                 if isinstance(rich_content, dict):
@@ -148,8 +183,8 @@ class ClaudeConversationExtractor:
                                             # Map tool_use_id to tool name
                                             if tool_id and tool_name:
                                                 tool_use_to_name[tool_id] = tool_name
-                                            # Track Task tool for subagent_type
-                                            if tool_name == "Task":
+                                            # Track Task/Agent tool for subagent_type
+                                            if tool_name in ("Task", "Agent"):
                                                 tool_input = item.get("input", {})
                                                 subagent_type = tool_input.get("subagent_type", "")
                                                 if subagent_type:
