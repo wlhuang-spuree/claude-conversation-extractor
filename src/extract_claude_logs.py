@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import tempfile
@@ -387,7 +388,54 @@ class ClaudeConversationExtractor:
         inp = usage.get("input_tokens", 0) + usage.get("cache_read_input_tokens", 0)
         out = usage.get("output_tokens", 0)
         return f"Token Usage: {inp} | {out}"
-    
+
+    def _format_json_if_valid(self, text: str) -> str:
+        """If text is valid JSON, wrap in ```json``` block and pretty-print; else return as-is."""
+        if not text or not text.strip():
+            return text
+        try:
+            parsed = json.loads(text)
+            formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
+            return f"```json\n{formatted}\n```"
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return text
+
+    def _is_skill_content(self, content: Union[str, Dict[str, Any]]) -> bool:
+        """Detect if message content is skill invocation (long SKILL.md content)."""
+        text = self._get_content_text(content)
+        return "<skill-format>true</skill-format>" in text or "Base directory for this skill:" in text
+
+    def _get_skill_summary(self, content: Union[str, Dict[str, Any]]) -> str:
+        """Extract summary for accordion: skill name if skill, else first ~60 chars."""
+        text = self._get_content_text(content)
+        m = re.search(r"<command-name>([^<]+)</command-name>", text)
+        if m:
+            return f"📚 {m.group(1)} • click to expand"
+        m = re.search(r"Base directory for this skill:.*[\\/]skills[\\/]([^\\/\s]+)", text)
+        if m:
+            return f"📚 {m.group(1)} • click to expand"
+        if len(text) > 60:
+            return text[:57].rstrip() + "..."
+        return text or "Content"
+
+    def _get_content_text(self, content: Union[str, Dict[str, Any]]) -> str:
+        """Get plain text from content for skill detection."""
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, dict):
+            return ""
+        text = content.get("text", "")
+        if not text and "parts" in content:
+            for p in content.get("parts", []):
+                if p.get("type") == "text":
+                    text += p.get("text", "")
+        return text
+
+    def _should_use_accordion(self, content: Union[str, Dict[str, Any]], min_lines: int = 3) -> bool:
+        """Return True if message has enough lines to warrant an accordion."""
+        text = self._get_content_text(content)
+        return len(text.splitlines()) >= min_lines
+
     def _extract_text_content(self, content, detailed: bool = False) -> str:
         """Extract text from various content formats Claude uses (legacy method).
         
@@ -535,7 +583,9 @@ class ClaudeConversationExtractor:
                         content_part = part.get("content", {})
                         if isinstance(content_part, dict):
                             if content_part.get("type") == "text":
-                                text_parts.append(f"\n[Tool Result: {tool_display}]\n{content_part.get('text', '')}\n")
+                                raw = content_part.get('text', '')
+                                formatted = self._format_json_if_valid(raw)
+                                text_parts.append(f"\n[Tool Result: {tool_display}]\n{formatted}\n")
                             elif content_part.get("type") == "image":
                                 text_parts.append(f"\n[Tool Result: {tool_display}]\n[Image]\n")
                             else:
@@ -656,7 +706,9 @@ class ClaudeConversationExtractor:
                 if isinstance(content_part, dict):
                     content_type = content_part.get("type")
                     if content_type == "text":
-                        html_parts.append(f'<div class="tool-result-content markdown-body">{self._markdown_to_html(content_part.get("text", ""))}</div>')
+                        raw_text = content_part.get("text", "")
+                        formatted = self._format_json_if_valid(raw_text)
+                        html_parts.append(f'<div class="tool-result-content markdown-body">{self._markdown_to_html(formatted)}</div>')
                     elif content_type == "image":
                         source = content_part.get("source", {})
                         if "data" in source and content_part.get("has_full_data"):
@@ -721,7 +773,9 @@ class ClaudeConversationExtractor:
                 if isinstance(content_part, dict):
                     content_type = content_part.get("type")
                     if content_type == "text":
-                        markdown_parts.append(f"{content_part.get('text', '')}\n")
+                        raw = content_part.get('text', '')
+                        formatted = self._format_json_if_valid(raw)
+                        markdown_parts.append(f"{formatted}\n")
                     elif content_type == "image":
                         markdown_parts.append("*[Image data included in conversation]*\n")
                     else:
@@ -1197,6 +1251,13 @@ class ClaudeConversationExtractor:
             font-size: 0.82em;
             color: #666;
         }}
+        .message-accordion {{ margin-top: 8px; }}
+        .message-accordion summary {{
+            cursor: pointer;
+            font-weight: 600;
+            color: #555;
+            padding: 4px 0;
+        }}
     </style>
 </head>
 <body>
@@ -1243,9 +1304,22 @@ class ClaudeConversationExtractor:
                         "system": "ℹ️ System"
                     }.get(role, role)
                 
+                use_accordion = self._should_use_accordion(content)
+                if use_accordion:
+                    is_skill = self._is_skill_content(content)
+                    summary_text = self._get_skill_summary(content)
+                    details_open = "" if is_skill else " open"
+                    summary_escaped = self._escape_html(summary_text)
+
                 f.write(f'    <div class="message {role}">\n')
                 f.write(f'        <div class="role">{role_display}</div>\n')
-                f.write(f'        <div class="content">{rendered_content}</div>\n')
+                if use_accordion:
+                    f.write(f'        <details class="message-accordion"{details_open}>\n')
+                    f.write(f'            <summary>{summary_escaped}</summary>\n')
+                    f.write(f'            <div class="content">{rendered_content}</div>\n')
+                    f.write(f'        </details>\n')
+                else:
+                    f.write(f'        <div class="content">{rendered_content}</div>\n')
                 if msg.get("usage"):
                     f.write(f'        <div class="token-usage">📊 {self._format_usage_line(msg["usage"])}</div>\n')
                 f.write(f'    </div>\n')
