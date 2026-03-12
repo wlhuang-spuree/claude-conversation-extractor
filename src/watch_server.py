@@ -25,6 +25,13 @@ try:
 except ImportError:
     from extract_claude_logs import ClaudeConversationExtractor
 
+try:
+    from utils.html_utils import escape_html
+    from utils.ui_utils import is_human_user_message, get_nav_label, build_sidebar_nav
+except ImportError:
+    from .utils.html_utils import escape_html
+    from .utils.ui_utils import is_human_user_message, get_nav_label, build_sidebar_nav
+
 
 # CSS shared with extract_claude_logs.py save_as_html (kept in sync manually)
 _CSS = """
@@ -216,6 +223,41 @@ _CSS = """
             box-shadow: 0 1px 4px rgba(0,0,0,0.12);
             z-index: 1000;
         }
+        .app-layout { display: flex; gap: 20px; }
+        body { max-width: 1400px; }
+        .sidebar {
+            position: sticky;
+            top: 20px;
+            width: 220px;
+            flex-shrink: 0;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .sidebar .nav-header { font-weight: bold; margin-bottom: 10px; color: #2c3e50; }
+        .sidebar .nav-link {
+            display: block;
+            padding: 6px 8px;
+            margin: 4px 0;
+            border-radius: 4px;
+            border-left: 3px solid transparent;
+            color: #333;
+            text-decoration: none;
+            font-size: 0.85em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .sidebar .nav-link:hover { background: #f0f0f0; }
+        .sidebar .nav-link.active {
+            border-left-color: #3498db;
+            background: #e8f4fc;
+            font-weight: 600;
+        }
+        .content-area { flex: 1; max-width: 900px; }
 """
 
 
@@ -258,6 +300,8 @@ class WatchServer:
         # SSE subscriber queues
         self._subscribers: List[queue.Queue] = []
         self._subscribers_lock = threading.Lock()
+        # Message count for SSE-assigned ids (initial + newly broadcast)
+        self._message_count: int = 0
 
     # ------------------------------------------------------------------ #
     # SSE pub/sub helpers
@@ -308,6 +352,7 @@ class WatchServer:
                         "role": "user",
                         "content": rich,
                         "timestamp": entry.get("timestamp", ""),
+                        "metadata": {"is_human": is_human_user_message(entry)},
                     }
 
         elif entry_type == "assistant" and "message" in entry:
@@ -315,6 +360,7 @@ class WatchServer:
             if isinstance(msg, dict) and msg.get("role") == "assistant":
                 content = msg.get("content", [])
                 # Track tool uses for name/subagent resolution
+                subagent_start = False
                 if isinstance(content, list):
                     for item in content:
                         if isinstance(item, dict) and item.get("type") == "tool_use":
@@ -322,7 +368,8 @@ class WatchServer:
                             tool_name = item.get("name", "")
                             if tool_id and tool_name:
                                 self._tool_use_to_name[tool_id] = tool_name
-                            if tool_name == "Task":
+                            if tool_name in ("Task", "Agent"):
+                                subagent_start = True
                                 subagent_type = item.get("input", {}).get("subagent_type", "")
                                 if subagent_type and tool_id:
                                     self._tool_use_to_subagent_type[tool_id] = subagent_type
@@ -335,6 +382,8 @@ class WatchServer:
                         "content": rich,
                         "timestamp": entry.get("timestamp", ""),
                         "usage": msg.get("usage", {}),
+                        "model": msg.get("model"),
+                        "metadata": {"subagent_start": subagent_start},
                     }
 
         elif entry_type == "progress":
@@ -379,46 +428,29 @@ class WatchServer:
                                         "timestamp", entry.get("timestamp", "")
                                     ),
                                     "usage": msg.get("usage", {}),
+                                    "model": msg.get("model"),
                                 }
 
         return None
 
-    def _render_message_html(self, msg: dict) -> str:
-        """Render a single message dict to an HTML <div> string."""
+    def _render_message_html(self, msg: dict, index: Optional[int] = None) -> str:
+        """Render a single message dict to an HTML <div> string. Optional index for id attribute."""
         role = msg["role"]
         content = msg["content"]
         rendered = self._extractor._render_content_to_html(content)
 
-        if role == "subagent_user":
-            metadata = msg.get("metadata", {})
-            subagent_type = metadata.get("subagent_type", "")
-            agent_id = metadata.get("agent_id", "unknown")
-            subagent_display = subagent_type.upper() if subagent_type else f"{agent_id[:8]}..."
-            role_display = f"🤖 Subagent ({subagent_display}) - User"
-        elif role == "subagent_assistant":
-            metadata = msg.get("metadata", {})
-            subagent_type = metadata.get("subagent_type", "")
-            agent_id = metadata.get("agent_id", "unknown")
-            subagent_display = subagent_type.upper() if subagent_type else f"{agent_id[:8]}..."
-            role_display = f"🤖 Subagent ({subagent_display}) - Assistant"
-        else:
-            role_display = {
-                "user": "👤 User",
-                "assistant": "🤖 Claude",
-                "tool_use": "🔧 Tool Use",
-                "tool_result": "📤 Tool Result",
-                "system": "ℹ️ System",
-            }.get(role, role)
+        role_display = get_nav_label(msg)
 
         use_accordion = self._extractor._should_use_accordion(content)
         if use_accordion:
             is_skill = self._extractor._is_skill_content(content)
             summary_text = self._extractor._get_skill_summary(content)
             details_open = "" if is_skill else " open"
-            summary_escaped = self._extractor._escape_html(summary_text)
+            summary_escaped = escape_html(summary_text)
 
+        id_attr = f' id="msg-{index}"' if index is not None else ""
         parts = [
-            f'    <div class="message {role}">\n',
+            f'    <div class="message {role}"{id_attr}>\n',
             f"        <div class=\"role\">{role_display}</div>\n",
         ]
         if use_accordion:
@@ -432,7 +464,7 @@ class WatchServer:
             parts.append(f'        <div class="content">{rendered}</div>\n')
         if msg.get("usage"):
             parts.append(
-                f'        <div class="token-usage">📊 {self._extractor._format_usage_line(msg["usage"])}</div>\n'
+                f'        <div class="token-usage">📊 {self._extractor._format_usage_line(msg["usage"], msg.get("model"))}</div>\n'
             )
         parts.append(f"    </div>\n")
         return "".join(parts)
@@ -478,9 +510,11 @@ class WatchServer:
     # HTML building
     # ------------------------------------------------------------------ #
 
+
     def _build_initial_html(self, conversation: list) -> str:
         session_id = self.jsonl_path.stem
-        messages_html = "".join(self._render_message_html(m) for m in conversation)
+        messages_html = "".join(self._render_message_html(m, i) for i, m in enumerate(conversation))
+        sidebar_nav = build_sidebar_nav(conversation)
         totals = self._extractor._sum_usage(conversation)
 
         return f"""<!DOCTYPE html>
@@ -493,6 +527,8 @@ class WatchServer:
     </style>
 </head>
 <body>
+    <div class="app-layout">
+        <main class="content-area">
     <div class="header">
         <h1>Claude Conversation \u2014 Live View</h1>
         <div class="metadata">
@@ -504,6 +540,12 @@ class WatchServer:
     </div>
     <div id="messages">
 {messages_html}
+    </div>
+        </main>
+        <nav class="sidebar" id="sidebar">
+            <div class="nav-header">Quick jump</div>
+            {sidebar_nav}
+        </nav>
     </div>
     <div id="status-bar">\U0001f7e2 Connected</div>
     <script>
@@ -523,6 +565,62 @@ class WatchServer:
         es.onopen = function() {{
             statusBar.textContent = '\U0001f7e2 Connected';
         }};
+        (function() {{
+            const links = document.querySelectorAll('.sidebar .nav-link');
+            const messages = document.querySelectorAll('.message[id^="msg-"]');
+            const headerOffset = 80;
+            let lastActiveIdx = -1;
+            let updateScheduled = false;
+
+            // Cache nav indices on load (static data)
+            const navIndices = [];
+            links.forEach(function(a) {{
+                const href = a.getAttribute('href');
+                if (href && href.startsWith('#msg-')) {{
+                    navIndices.push(parseInt(href.replace('#msg-', ''), 10));
+                }}
+            }});
+            navIndices.sort(function(a, b) {{ return a - b; }});
+
+            function updateActive() {{
+                updateScheduled = false;
+                let currentIdx = -1;
+                let minDist = Infinity;
+                messages.forEach(function(m) {{
+                    const rect = m.getBoundingClientRect();
+                    const dist = Math.abs(rect.top - headerOffset);
+                    if (rect.top < window.innerHeight && rect.bottom > 0 && dist < minDist) {{
+                        minDist = dist;
+                        currentIdx = parseInt(m.id.replace('msg-', ''), 10);
+                    }}
+                }});
+                let activeIdx = -1;
+                for (let i = navIndices.length - 1; i >= 0; i--) {{
+                    if (navIndices[i] <= currentIdx) {{
+                        activeIdx = navIndices[i];
+                        break;
+                    }}
+                }}
+                if (currentIdx >= 0 && activeIdx < 0 && navIndices.length > 0) {{ activeIdx = navIndices[0]; }}
+
+                // Only update if changed (reduces DOM updates)
+                if (activeIdx !== lastActiveIdx) {{
+                    lastActiveIdx = activeIdx;
+                    links.forEach(function(a) {{
+                        a.classList.toggle('active', a.getAttribute('href') === '#msg-' + activeIdx);
+                    }});
+                }}
+            }}
+
+            // Throttle scroll updates to 100ms
+            window.addEventListener('scroll', function() {{
+                if (!updateScheduled) {{
+                    updateScheduled = true;
+                    requestAnimationFrame(updateActive);
+                }}
+            }}, {{ passive: true }});
+            window.addEventListener('load', updateActive);
+        }})();
     </script>
 </body>
 </html>"""
@@ -558,7 +656,9 @@ class WatchServer:
                     entry = json.loads(stripped)
                     msg = self._parse_entry(entry)
                     if msg:
-                        self._broadcast(self._render_message_html(msg))
+                        idx = self._message_count
+                        self._message_count += 1
+                        self._broadcast(self._render_message_html(msg, idx))
                 except Exception:
                     continue
         except Exception:
@@ -572,6 +672,7 @@ class WatchServer:
         """Load initial content, start HTTP server and poll thread, open browser."""
         print(f"\U0001f441  Loading: {self.jsonl_path}")
         conversation = self._load_initial()
+        self._message_count = len(conversation)
         initial_html = self._build_initial_html(conversation)
 
         server_self = self  # closure reference

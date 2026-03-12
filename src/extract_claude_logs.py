@@ -22,6 +22,13 @@ from typing import Dict, List, Optional, Tuple, Union, Any
 import bleach
 import markdown
 
+try:
+    from utils.html_utils import escape_html
+    from utils.ui_utils import is_human_user_message, get_nav_label, build_sidebar_nav
+except ImportError:
+    from .utils.html_utils import escape_html
+    from .utils.ui_utils import is_human_user_message, get_nav_label, build_sidebar_nav
+
 
 def setup_utf8_encoding():
     """Configure stdout and stderr to use UTF-8 encoding to support emoji and special characters."""
@@ -164,11 +171,13 @@ class ClaudeConversationExtractor:
                                     text = str(rich_content)
                                 
                                 if text and text.strip():
+                                    is_human = is_human_user_message(entry)
                                     conversation.append(
                                         {
                                             "role": "user",
                                             "content": rich_content,
                                             "timestamp": entry.get("timestamp", ""),
+                                            "metadata": {"is_human": is_human},
                                         }
                                     )
 
@@ -179,6 +188,7 @@ class ClaudeConversationExtractor:
                                 content = msg.get("content", [])
                                 
                                 # Track tool uses to extract subagent_type and tool names
+                                subagent_start = False
                                 if isinstance(content, list):
                                     for item in content:
                                         if isinstance(item, dict) and item.get("type") == "tool_use":
@@ -189,6 +199,7 @@ class ClaudeConversationExtractor:
                                                 tool_use_to_name[tool_id] = tool_name
                                             # Track Task/Agent tool for subagent_type
                                             if tool_name in ("Task", "Agent"):
+                                                subagent_start = True
                                                 tool_input = item.get("input", {})
                                                 subagent_type = tool_input.get("subagent_type", "")
                                                 if subagent_type:
@@ -211,6 +222,8 @@ class ClaudeConversationExtractor:
                                             "content": rich_content,
                                             "timestamp": entry.get("timestamp", ""),
                                             "usage": msg.get("usage", {}),
+                                            "model": msg.get("model"),
+                                            "metadata": {"subagent_start": subagent_start},
                                         }
                                     )
                         
@@ -297,6 +310,7 @@ class ClaudeConversationExtractor:
                                                 },
                                                 "timestamp": message_data.get("timestamp", entry.get("timestamp", "")),
                                                 "usage": msg.get("usage", {}),
+                                                "model": msg.get("model"),
                                             })
                         
                         # Include tool use and system messages if detailed mode
@@ -374,6 +388,7 @@ class ClaudeConversationExtractor:
         
         return content
 
+
     def _sum_usage(self, conversation: List[Dict]) -> Dict[str, int]:
         """Sum token usage across all messages. input = input_tokens + cache_read_input_tokens."""
         total = {"input": 0, "output": 0}
@@ -383,11 +398,12 @@ class ClaudeConversationExtractor:
             total["output"] += u.get("output_tokens", 0)
         return total
 
-    def _format_usage_line(self, usage: Dict) -> str:
-        """Format usage as: Token Usage: {input} | {output}"""
+    def _format_usage_line(self, usage: Dict, model: Optional[str] = None) -> str:
+        """Format usage as: Token Usage: {input} | {output} | {model} (model optional)"""
         inp = usage.get("input_tokens", 0) + usage.get("cache_read_input_tokens", 0)
         out = usage.get("output_tokens", 0)
-        return f"Token Usage: {inp} | {out}"
+        base = f"Token Usage: {inp} | {out}"
+        return f"{base} | {model}" if model else base
 
     def _format_json_if_valid(self, text: str) -> str:
         """If text is valid JSON, wrap in ```json``` block and pretty-print; else return as-is."""
@@ -605,14 +621,6 @@ class ClaudeConversationExtractor:
                 "parts": [{"type": "text", "text": str(content)}]
             }
 
-    def _escape_html(self, text: str) -> str:
-        """Escape HTML special characters"""
-        return (text.replace("&", "&amp;")
-                   .replace("<", "&lt;")
-                   .replace(">", "&gt;")
-                   .replace('"', "&quot;")
-                   .replace("'", "&#x27;"))
-
     def _markdown_to_html(self, text: str) -> str:
         """Convert markdown to HTML with sanitization (safe for embedding)."""
         if not text or not text.strip():
@@ -644,7 +652,7 @@ class ClaudeConversationExtractor:
         """
         if isinstance(content, str):
             # Backward compatible: plain text content
-            return self._escape_html(content)
+            return escape_html(content)
         
         # Structured content
         parts = content.get("parts", [])
@@ -665,8 +673,8 @@ class ClaudeConversationExtractor:
                 tool_input_json = json.dumps(part["input"], indent=2, ensure_ascii=False)
                 html_parts.append(
                     f'<div class="content-tool-use">'
-                    f'<div class="tool-name">🔧 {self._escape_html(part["name"])}</div>'
-                    f'<pre class="tool-input">{self._escape_html(tool_input_json)}</pre>'
+                    f'<div class="tool-name">🔧 {escape_html(part["name"])}</div>'
+                    f'<pre class="tool-input">{escape_html(tool_input_json)}</pre>'
                     f'</div>'
                 )
             elif part_type == "image":
@@ -682,7 +690,7 @@ class ClaudeConversationExtractor:
                 elif part.get("data_url"):
                     html_parts.append(
                         f'<div class="content-image">'
-                        f'<img src="{self._escape_html(part["data_url"])}" alt="Screenshot" style="max-width: 100%; height: auto;" />'
+                        f'<img src="{escape_html(part["data_url"])}" alt="Screenshot" style="max-width: 100%; height: auto;" />'
                         f'</div>'
                     )
                 else:
@@ -691,7 +699,7 @@ class ClaudeConversationExtractor:
                 html_parts.append(
                     f'<div class="content-tool-reference">'
                     f'<span class="tool-ref-label">Tool Reference:</span> '
-                    f'<code>{self._escape_html(part["tool_name"])}</code>'
+                    f'<code>{escape_html(part["tool_name"])}</code>'
                     f'</div>'
                 )
             elif part_type == "tool_result":
@@ -701,7 +709,7 @@ class ClaudeConversationExtractor:
                 content_part = part.get("content", {})
                 
                 html_parts.append(f'<div class="content-tool-result">')
-                html_parts.append(f'<div class="tool-result-header">📤 Tool Result: {self._escape_html(tool_display)}</div>')
+                html_parts.append(f'<div class="tool-result-header">📤 Tool Result: {escape_html(tool_display)}</div>')
                 
                 if isinstance(content_part, dict):
                     content_type = content_part.get("type")
@@ -721,15 +729,15 @@ class ClaudeConversationExtractor:
                         elif content_part.get("data_url"):
                             html_parts.append(
                                 f'<div class="content-image">'
-                                f'<img src="{self._escape_html(content_part["data_url"])}" alt="Screenshot" style="max-width: 100%; height: auto;" />'
+                                f'<img src="{escape_html(content_part["data_url"])}" alt="Screenshot" style="max-width: 100%; height: auto;" />'
                                 f'</div>'
                             )
                         else:
                             html_parts.append('<div class="content-image-placeholder">[Image Data]</div>')
                     else:
-                        html_parts.append(f'<div class="tool-result-content">{self._escape_html(str(content_part))}</div>')
+                        html_parts.append(f'<div class="tool-result-content">{escape_html(str(content_part))}</div>')
                 else:
-                    html_parts.append(f'<div class="tool-result-content">{self._escape_html(str(content_part))}</div>')
+                    html_parts.append(f'<div class="tool-result-content">{escape_html(str(content_part))}</div>')
                 
                 html_parts.append(f'</div>')
         
@@ -956,7 +964,7 @@ class ClaudeConversationExtractor:
                     f.write("## 🤖 Claude\n\n")
                     f.write(f"{display_content}\n\n")
                     if msg.get("usage"):
-                        f.write(f"*📊 {self._format_usage_line(msg['usage'])}*\n\n")
+                        f.write(f"*📊 {self._format_usage_line(msg['usage'], msg.get('model'))}*\n\n")
                 elif role == "subagent_user":
                     metadata = msg.get("metadata", {})
                     agent_id = metadata.get("agent_id", "unknown")
@@ -972,7 +980,7 @@ class ClaudeConversationExtractor:
                     f.write(f"## 🤖 Subagent ({subagent_display}) - Assistant\n\n")
                     f.write(f"{display_content}\n\n")
                     if msg.get("usage"):
-                        f.write(f"*📊 {self._format_usage_line(msg['usage'])}*\n\n")
+                        f.write(f"*📊 {self._format_usage_line(msg['usage'], msg.get('model'))}*\n\n")
                 elif role == "tool_use":
                     f.write("### 🔧 Tool Use\n\n")
                     f.write(f"{display_content}\n\n")
@@ -1062,7 +1070,7 @@ class ClaudeConversationExtractor:
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             line-height: 1.6;
             color: #333;
-            max-width: 900px;
+            max-width: 1400px;
             margin: 0 auto;
             padding: 20px;
             background: #f5f5f5;
@@ -1258,9 +1266,45 @@ class ClaudeConversationExtractor:
             color: #555;
             padding: 4px 0;
         }}
+        .app-layout {{ display: flex; gap: 20px; }}
+        .sidebar {{
+            position: sticky;
+            top: 20px;
+            width: 220px;
+            flex-shrink: 0;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        .sidebar .nav-header {{ font-weight: bold; margin-bottom: 10px; color: #2c3e50; }}
+        .sidebar .nav-link {{
+            display: block;
+            padding: 6px 8px;
+            margin: 4px 0;
+            border-radius: 4px;
+            border-left: 3px solid transparent;
+            color: #333;
+            text-decoration: none;
+            font-size: 0.85em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .sidebar .nav-link:hover {{ background: #f0f0f0; }}
+        .sidebar .nav-link.active {{
+            border-left-color: #3498db;
+            background: #e8f4fc;
+            font-weight: 600;
+        }}
+        .content-area {{ flex: 1; max-width: 900px; }}
     </style>
 </head>
 <body>
+    <div class="app-layout">
+        <main class="content-area">
     <div class="header">
         <h1>Claude Conversation Log</h1>
         <div class="metadata">
@@ -1275,7 +1319,7 @@ class ClaudeConversationExtractor:
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(html_content)
             
-            for msg in conversation:
+            for i, msg in enumerate(conversation):
                 role = msg["role"]
                 content = msg["content"]
                 
@@ -1309,9 +1353,10 @@ class ClaudeConversationExtractor:
                     is_skill = self._is_skill_content(content)
                     summary_text = self._get_skill_summary(content)
                     details_open = "" if is_skill else " open"
-                    summary_escaped = self._escape_html(summary_text)
+                    summary_escaped = escape_html(summary_text)
 
-                f.write(f'    <div class="message {role}">\n')
+                msg_id = f"msg-{i}"
+                f.write(f'    <div class="message {role}" id="{msg_id}">\n')
                 f.write(f'        <div class="role">{role_display}</div>\n')
                 if use_accordion:
                     f.write(f'        <details class="message-accordion"{details_open}>\n')
@@ -1321,10 +1366,77 @@ class ClaudeConversationExtractor:
                 else:
                     f.write(f'        <div class="content">{rendered_content}</div>\n')
                 if msg.get("usage"):
-                    f.write(f'        <div class="token-usage">📊 {self._format_usage_line(msg["usage"])}</div>\n')
+                    f.write(f'        <div class="token-usage">📊 {self._format_usage_line(msg["usage"], msg.get("model"))}</div>\n')
                 f.write(f'    </div>\n')
             
-            f.write("\n</body>\n</html>")
+            f.write(f"""
+        </main>
+        <nav class="sidebar" id="sidebar">
+            <div class="nav-header">Quick jump</div>
+            {build_sidebar_nav(conversation)}
+        </nav>
+    </div>
+    <script>
+(function() {{
+    const links = document.querySelectorAll('.sidebar .nav-link');
+    const messages = document.querySelectorAll('.message[id^="msg-"]');
+    const headerOffset = 80;
+    let lastActiveIdx = -1;
+    let updateScheduled = false;
+
+    // Cache nav indices on load (static data)
+    const navIndices = [];
+    links.forEach(function(a) {{
+        const href = a.getAttribute('href');
+        if (href && href.startsWith('#msg-')) {{
+            navIndices.push(parseInt(href.replace('#msg-', ''), 10));
+        }}
+    }});
+    navIndices.sort(function(a, b) {{ return a - b; }});
+
+    function updateActive() {{
+        updateScheduled = false;
+        let currentIdx = -1;
+        let minDist = Infinity;
+        messages.forEach(function(m) {{
+            const rect = m.getBoundingClientRect();
+            const dist = Math.abs(rect.top - headerOffset);
+            if (rect.top < window.innerHeight && rect.bottom > 0 && dist < minDist) {{
+                minDist = dist;
+                currentIdx = parseInt(m.id.replace('msg-', ''), 10);
+            }}
+        }});
+        let activeIdx = -1;
+        for (let i = navIndices.length - 1; i >= 0; i--) {{
+            if (navIndices[i] <= currentIdx) {{
+                activeIdx = navIndices[i];
+                break;
+            }}
+        }}
+        if (currentIdx >= 0 && activeIdx < 0 && navIndices.length > 0) {{ activeIdx = navIndices[0]; }}
+
+        // Only update if changed (reduces DOM updates)
+        if (activeIdx !== lastActiveIdx) {{
+            lastActiveIdx = activeIdx;
+            links.forEach(function(a) {{
+                a.classList.toggle('active', a.getAttribute('href') === '#msg-' + activeIdx);
+            }});
+        }}
+    }}
+
+    // Throttle scroll updates to requestAnimationFrame
+    window.addEventListener('scroll', function() {{
+        if (!updateScheduled) {{
+            updateScheduled = true;
+            requestAnimationFrame(updateActive);
+        }}
+    }}, {{ passive: true }});
+    window.addEventListener('load', updateActive);
+    updateActive();
+}})();
+    </script>
+</body>
+</html>""")
 
         return output_path
 
